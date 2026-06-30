@@ -167,6 +167,7 @@ static void udpInit(void) {
     if (udpSock < 0) return;
     int opt = 1;
     setsockopt(udpSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(udpSock, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
     setsockopt(udpSock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -176,34 +177,33 @@ static void udpInit(void) {
     if (bind(udpSock, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(udpSock); udpSock = -1; return; }
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
         char buf[256];
+        fd_set fds;
+        struct timeval tv;
         while (1) {
-            @try {
+            @autoreleasepool {
+                FD_ZERO(&fds);
+                FD_SET(udpSock, &fds);
+                tv.tv_sec = 0; tv.tv_usec = 10000;
+                if (select(udpSock+1, &fds, NULL, NULL, &tv) <= 0) continue;
                 struct sockaddr_in from;
                 socklen_t flen = sizeof(from);
                 ssize_t n = recvfrom(udpSock, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
-                if (n > 0) {
-                    buf[n] = 0;
-                    NSString *m = [NSString stringWithUTF8String:buf];
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        @try {
-                            if ([m hasPrefix:@"POS:"]) {
-                                NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                                if (p.count == 2 && tapCircle && tapCircle.superview)
-                                    tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                if (n <= 0) continue;
+                buf[n] = 0;
+                NSString *m = [NSString stringWithUTF8String:buf];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if ([m hasPrefix:@"POS:"]) {
+                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
+                        if (p.count == 2 && tapCircle && tapCircle.superview)
+                            tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
                     } else if ([m isEqualToString:@"RUN"]) {
-                            if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
-                        } else if ([m isEqualToString:@"STOP"]) {
-                                if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
-                            } else if ([m isEqualToString:@"TAP"]) {
-                                [Tapper doTapLocal];
-                            }
-                        } @catch (NSException *e) {
-                            NSLog(@"[YLT] UDP msg error: %@ %@", e.name, e.reason);
-                        }
-                    });
-                }
-            } @catch (NSException *e) {
-                NSLog(@"[YLT] UDP recv error: %@ %@", e.name, e.reason);
+                        if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
+                    } else if ([m isEqualToString:@"STOP"]) {
+                        if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
+                    } else if ([m isEqualToString:@"TAP"]) {
+                        [Tapper doTapLocal];
+                    }
+                });
             }
         }
     });
@@ -253,38 +253,34 @@ static void sendAll(NSString *msg) {
         }];
     }];
 
-    @try {
-        UIWindow *w = activeWindow();
-        if (!w) return;
+    UIWindow *w = activeWindow();
+    if (!w) return;
 
-        BOOL ch = tapCircle.hidden, bh = ctrlBox.hidden;
-        tapCircle.hidden = YES; ctrlBox.hidden = YES;
+    BOOL ch = tapCircle.hidden, bh = ctrlBox.hidden;
+    tapCircle.hidden = YES; ctrlBox.hidden = YES;
 
-        CGPoint pt = [tapCircle.superview convertPoint:tapCircle.center toView:w];
-        UIView *target = [w hitTest:pt withEvent:nil];
+    CGPoint pt = [tapCircle.superview convertPoint:tapCircle.center toView:w];
+    UIView *target = [w hitTest:pt withEvent:nil];
 
-        tapCircle.hidden = ch; ctrlBox.hidden = bh;
+    tapCircle.hidden = ch; ctrlBox.hidden = bh;
 
-        if (!target || target == tapCircle) return;
+    if (!target || target == tapCircle) return;
 
-        UIView *hit = target;
-        while (hit && ![hit isKindOfClass:[UIControl class]]) hit = hit.superview;
-        UIControl *ctrl = (UIControl *)hit;
-        if (ctrl) {
-            [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
-            [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
-        }
-
-        UIView *fx = [[UIView alloc] initWithFrame:CGRectMake(0,0,16,16)];
-        fx.center = pt; fx.backgroundColor = rgba(100, 180, 255, 0.5);
-        fx.layer.cornerRadius = 8; fx.userInteractionEnabled = NO;
-        [w addSubview:fx];
-        [UIView animateWithDuration:0.3 animations:^{
-            fx.alpha = 0; fx.transform = CGAffineTransformMakeScale(4, 4);
-        } completion:^(BOOL f) { [fx removeFromSuperview]; }];
-    } @catch (NSException *e) {
-        NSLog(@"[YLT] Tap error: %@ %@", e.name, e.reason);
+    UIView *hit = target;
+    while (hit && ![hit isKindOfClass:[UIControl class]]) hit = hit.superview;
+    UIControl *ctrl = (UIControl *)hit;
+    if (ctrl) {
+        [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
+        [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
     }
+
+    UIView *fx = [[UIView alloc] initWithFrame:CGRectMake(0,0,16,16)];
+    fx.center = pt; fx.backgroundColor = rgba(100, 180, 255, 0.5);
+    fx.layer.cornerRadius = 8; fx.userInteractionEnabled = NO;
+    [w addSubview:fx];
+    [UIView animateWithDuration:0.3 animations:^{
+        fx.alpha = 0; fx.transform = CGAffineTransformMakeScale(4, 4);
+    } completion:^(BOOL f) { [fx removeFromSuperview]; }];
 }
 
 + (void)doTap {
