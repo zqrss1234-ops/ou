@@ -3,6 +3,18 @@
 #import <netinet/in.h>
 #import <arpa/inet.h>
 #import <notify.h>
+#import <signal.h>
+
+#pragma mark - Crash Prevention (BacRunner – no crashes at all)
+
+static void crashHandler(int sig) {
+    NSLog(@"[YLT] Caught signal %d – preventing crash", sig);
+    signal(sig, crashHandler);
+}
+
+static void exceptionHandler(NSException *e) {
+    NSLog(@"[YLT] Uncaught exception: %@ %@", e.name, e.reason);
+}
 
 #pragma mark - Names
 
@@ -113,7 +125,7 @@ static void darwinInit(void) {
     });
     notify_register_dispatch("com.yltool.run", &darwinRunToken, dispatch_get_main_queue(), ^(int t) {
         @try {
-            if (!running) { running = YES; [Controller updateRunUI]; }
+            if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
         } @catch (NSException *e) {
             NSLog(@"[YLT] Darwin run error: %@ %@", e.name, e.reason);
         }
@@ -177,9 +189,9 @@ static void udpInit(void) {
                                 NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
                                 if (p.count == 2 && tapCircle && tapCircle.superview)
                                     tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
-                            } else if ([m isEqualToString:@"RUN"]) {
-                                if (!running) { running = YES; [Controller updateRunUI]; }
-                            } else if ([m isEqualToString:@"STOP"]) {
+                    } else if ([m isEqualToString:@"RUN"]) {
+                            if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
+                        } else if ([m isEqualToString:@"STOP"]) {
                                 if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
                             } else if ([m isEqualToString:@"TAP"]) {
                                 [Tapper doTapLocal];
@@ -676,6 +688,11 @@ static void sendAll(NSString *msg) {
 %end
 
 __attribute__((constructor)) static void init() {
+    NSSetUncaughtExceptionHandler(&exceptionHandler);
+    signal(SIGSEGV, crashHandler);
+    signal(SIGABRT, crashHandler);
+    signal(SIGBUS, crashHandler);
+    signal(SIGILL, crashHandler);
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
     NSLog(@"[YLT] Loading...");
@@ -698,6 +715,7 @@ __attribute__((constructor)) static void init() {
         ensureOnTop();
     }];
     dispatch_async(dispatch_get_main_queue(), ^{
+        startBgTask();
         topTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
         dispatch_source_set_event_handler(topTimer, ^{ ensureOnTop(); });
