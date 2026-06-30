@@ -283,23 +283,23 @@ static void sendAll(NSString *msg) {
         marqueeTxt = [marqueeTxt stringByAppendingFormat:@"  ◉  %@", n];
     }
 
-    // ---- Control Box ----
-    CGFloat bw = 236, bh = 218, bx = (sw-bw)/2, by = sh * 0.10;
+    // ---- Premium Control Box ----
+    CGFloat bw = 230, bh = 210, bx = (sw-bw)/2, by = sh * 0.12;
     ctrlBox = [[UIView alloc] initWithFrame:CGRectMake(bx, by, bw, bh)];
-    ctrlBox.backgroundColor = rgba(8, 8, 16, 0.92);
-    ctrlBox.layer.cornerRadius = 28;
-    ctrlBox.layer.borderColor = rgba(100, 100, 140, 0.15).CGColor;
+    ctrlBox.backgroundColor = rgba(6, 6, 12, 0.94);
+    ctrlBox.layer.cornerRadius = 26;
+    ctrlBox.layer.borderColor = rgba(80, 80, 120, 0.2).CGColor;
     ctrlBox.layer.borderWidth = 0.5;
-    ctrlBox.layer.shadowColor = rgba(60, 130, 255, 0.15).CGColor;
-    ctrlBox.layer.shadowOpacity = 0.7;
-    ctrlBox.layer.shadowOffset = CGSizeMake(0, 14);
-    ctrlBox.layer.shadowRadius = 40;
+    ctrlBox.layer.shadowColor = rgba(60, 130, 255, 0.2).CGColor;
+    ctrlBox.layer.shadowOpacity = 0.6;
+    ctrlBox.layer.shadowOffset = CGSizeMake(0, 12);
+    ctrlBox.layer.shadowRadius = 35;
     ctrlBox.tag = 100;
 
     accentLine = [CAGradientLayer layer];
     accentLine.frame = CGRectMake(0, 0, bw, 3);
-    accentLine.colors = @[(id)rgba(255, 80, 80, 0.7).CGColor,
-                          (id)rgba(80, 80, 255, 0.4).CGColor,
+    accentLine.colors = @[(id)rgba(255, 80, 80, 0.8).CGColor,
+                          (id)rgba(80, 80, 255, 0.5).CGColor,
                           (id)rgba(255, 80, 80, 0).CGColor];
     accentLine.startPoint = CGPointMake(0, 0);
     accentLine.endPoint = CGPointMake(1, 0);
@@ -307,19 +307,19 @@ static void sendAll(NSString *msg) {
 
     CAGradientLayer *innerGlow = [CAGradientLayer layer];
     innerGlow.frame = ctrlBox.bounds;
-    innerGlow.colors = @[(id)rgba(50, 50, 80, 0.06).CGColor, (id)rgba(8, 8, 16, 0).CGColor];
+    innerGlow.colors = @[(id)rgba(40, 40, 70, 0.08).CGColor, (id)rgba(6, 6, 12, 0).CGColor];
     innerGlow.startPoint = CGPointMake(0, 0);
     innerGlow.endPoint = CGPointMake(1, 1);
     [ctrlBox.layer addSublayer:innerGlow];
 
     CGFloat yy = 10;
 
-    // ---- Marquee ----
+    // ---- Marquee Names (GCD timer, smooth) ----
     UIView *marqueeBox = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 34)];
-    marqueeBox.backgroundColor = rgba(12, 12, 24, 0.5);
+    marqueeBox.backgroundColor = rgba(12, 12, 24, 0.6);
     marqueeBox.layer.cornerRadius = 17;
     marqueeBox.clipsToBounds = YES;
-    marqueeBox.layer.borderColor = rgba(60, 60, 100, 0.12).CGColor;
+    marqueeBox.layer.borderColor = rgba(60, 60, 100, 0.15).CGColor;
     marqueeBox.layer.borderWidth = 0.5;
 
     marqueeLbl = [[UILabel alloc] init];
@@ -327,7 +327,7 @@ static void sendAll(NSString *msg) {
     CGFloat singleW = singleSz.width + 24;
     marqueeLbl.frame = CGRectMake(0, 0, singleW * 2, 34);
     marqueeLbl.text = [marqueeTxt stringByAppendingString:marqueeTxt];
-    marqueeLbl.textColor = rgba(230, 235, 255, 0.92);
+    marqueeLbl.textColor = rgba(240, 245, 255, 0.92);
     marqueeLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
     [marqueeBox addSubview:marqueeLbl];
     [ctrlBox addSubview:marqueeBox];
@@ -335,7 +335,7 @@ static void sendAll(NSString *msg) {
     CGFloat cw = marqueeBox.frame.size.width;
     if (singleW > cw) {
         __block CGFloat offset = 0;
-        CGFloat speed = singleW / 28.0;
+        CGFloat speed = singleW / 25.0;
         marqueeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(marqueeTimer, DISPATCH_TIME_NOW, (1.0/60.0) * NSEC_PER_SEC, (1.0/60.0) * NSEC_PER_SEC);
         dispatch_source_set_event_handler(marqueeTimer, ^{
@@ -350,13 +350,13 @@ static void sendAll(NSString *msg) {
     // ---- Speed ----
     UILabel *spLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, yy, 90, 14)];
     spLbl.text = @"سرعة النقر";
-    spLbl.textColor = rgba(150, 160, 190, 0.55);
+    spLbl.textColor = rgba(150, 160, 190, 0.65);
     spLbl.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
     [ctrlBox addSubview:spLbl];
 
     delayLabel = [[UILabel alloc] initWithFrame:CGRectMake(bw-95, yy, 80, 14)];
     delayLabel.text = @"200 ms";
-    delayLabel.textColor = rgba(100, 180, 255, 0.8);
+    delayLabel.textColor = rgba(100, 180, 255, 0.85);
     delayLabel.font = [UIFont fontWithName:@"Menlo-Bold" size:11] ?: [UIFont boldSystemFontOfSize:11];
     delayLabel.textAlignment = NSTextAlignmentRight;
     [ctrlBox addSubview:delayLabel];
@@ -367,16 +367,16 @@ static void sendAll(NSString *msg) {
     delaySlider.maximumValue = 500;
     delaySlider.value = 200;
     delaySlider.continuous = YES;
-    delaySlider.minimumTrackTintColor = rgba(60, 130, 255, 0.85);
-    delaySlider.maximumTrackTintColor = rgba(35, 35, 55, 0.5);
+    delaySlider.minimumTrackTintColor = rgba(60, 130, 255, 0.9);
+    delaySlider.maximumTrackTintColor = rgba(35, 35, 55, 0.6);
     [delaySlider setThumbImage:[self thumbImage] forState:UIControlStateNormal];
     [delaySlider addTarget:self action:@selector(speedChange) forControlEvents:UIControlEventValueChanged];
     [ctrlBox addSubview:delaySlider];
     yy += 26;
 
-    // ---- Run/Hide ----
+    // ---- Run/Hide Row ----
     runBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    runBtn.frame = CGRectMake(10, yy, (bw-26)*0.60, 38);
+    runBtn.frame = CGRectMake(10, yy, (bw-26)*0.62, 38);
     runBtn.backgroundColor = rgba(40, 100, 230, 1);
     runBtn.layer.cornerRadius = 16;
     runBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
@@ -386,21 +386,21 @@ static void sendAll(NSString *msg) {
     [ctrlBox addSubview:runBtn];
 
     UIButton *hideBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    hideBtn.frame = CGRectMake(CGRectGetMaxX(runBtn.frame)+6, yy, (bw-26)*0.40, 38);
-    hideBtn.backgroundColor = rgba(35, 35, 55, 0.6);
+    hideBtn.frame = CGRectMake(CGRectGetMaxX(runBtn.frame)+6, yy, (bw-26)*0.38, 38);
+    hideBtn.backgroundColor = rgba(35, 35, 55, 0.7);
     hideBtn.layer.cornerRadius = 16;
     hideBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
     [hideBtn setTitle:@"✕ إخفاء" forState:UIControlStateNormal];
-    [hideBtn setTitleColor:rgba(150, 160, 190, 0.8) forState:UIControlStateNormal];
+    [hideBtn setTitleColor:rgba(150, 160, 190, 0.9) forState:UIControlStateNormal];
     [hideBtn addTarget:self action:@selector(hideAll) forControlEvents:UIControlEventTouchUpInside];
     [ctrlBox addSubview:hideBtn];
     yy += 44;
 
-    // ---- Merge ----
+    // ---- Merge Row ----
     UIView *mergeRow = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 32)];
-    mergeRow.backgroundColor = rgba(12, 12, 24, 0.45);
+    mergeRow.backgroundColor = rgba(12, 12, 24, 0.5);
     mergeRow.layer.cornerRadius = 16;
-    mergeRow.layer.borderColor = rgba(60, 200, 100, 0.12).CGColor;
+    mergeRow.layer.borderColor = rgba(60, 200, 100, 0.15).CGColor;
     mergeRow.layer.borderWidth = 0.5;
 
     mergeDot = [[UIView alloc] initWithFrame:CGRectMake(10, 11, 10, 10)];
@@ -425,7 +425,7 @@ static void sendAll(NSString *msg) {
     // ---- Footer ----
     UILabel *footer = [[UILabel alloc] initWithFrame:CGRectMake(0, yy, bw, bh-yy-2)];
     footer.text = @"حقوق عبدالإله";
-    footer.textColor = rgba(80, 90, 120, 0.25);
+    footer.textColor = rgba(80, 90, 120, 0.3);
     footer.font = [UIFont systemFontOfSize:7 weight:UIFontWeightLight];
     footer.textAlignment = NSTextAlignmentCenter;
     [ctrlBox addSubview:footer];
@@ -436,23 +436,23 @@ static void sendAll(NSString *msg) {
     [w addSubview:ctrlBox];
     [w bringSubviewToFront:ctrlBox];
 
-    // ---- Tap Circle ----
-    CGFloat cs = 48, cx = (sw-cs)/2, cy = sh * 0.58;
+    // ---- Tap Circle (white inside, black border, "impossible") ----
+    CGFloat cs = 46, cx = (sw-cs)/2, cy = sh * 0.58;
     tapCircle = [[UIView alloc] initWithFrame:CGRectMake(cx, cy, cs, cs)];
-    tapCircle.backgroundColor = rgba(255, 255, 255, 0.10);
+    tapCircle.backgroundColor = rgba(255, 255, 255, 0.12);
     tapCircle.layer.cornerRadius = cs/2;
-    tapCircle.layer.borderColor = rgba(0, 0, 0, 0.85).CGColor;
+    tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
     tapCircle.layer.borderWidth = 2.5;
     tapCircle.layer.shadowColor = UIColor.blackColor.CGColor;
     tapCircle.layer.shadowOpacity = 0.5;
     tapCircle.layer.shadowOffset = CGSizeZero;
-    tapCircle.layer.shadowRadius = 12;
+    tapCircle.layer.shadowRadius = 10;
     tapCircle.userInteractionEnabled = YES;
     tapCircle.tag = 300;
 
     UILabel *impossibleLbl = [[UILabel alloc] initWithFrame:tapCircle.bounds];
     impossibleLbl.text = @"impossible";
-    impossibleLbl.textColor = rgba(0, 0, 0, 0.20);
+    impossibleLbl.textColor = rgba(0, 0, 0, 0.25);
     impossibleLbl.font = [UIFont boldSystemFontOfSize:7];
     impossibleLbl.textAlignment = NSTextAlignmentCenter;
     impossibleLbl.userInteractionEnabled = NO;
@@ -484,16 +484,15 @@ static void sendAll(NSString *msg) {
         if (!accentLine) return;
         hue += 1.0/16.0;
         if (hue > 1) hue -= 1;
-        UIColor *c1 = [UIColor colorWithHue:hue saturation:1 brightness:1 alpha:0.75];
-        UIColor *c2 = [UIColor colorWithHue:fmod(hue+0.4,1) saturation:0.8 brightness:0.9 alpha:0.35];
-        UIColor *c3 = [UIColor colorWithHue:fmod(hue+0.7,1) saturation:0.6 brightness:0.7 alpha:0.08];
+        UIColor *c1 = [UIColor colorWithHue:hue saturation:1 brightness:1 alpha:0.8];
+        UIColor *c2 = [UIColor colorWithHue:fmod(hue+0.4,1) saturation:0.8 brightness:0.9 alpha:0.4];
+        UIColor *c3 = [UIColor colorWithHue:fmod(hue+0.7,1) saturation:0.6 brightness:0.7 alpha:0.1];
         accentLine.colors = @[(id)c1.CGColor, (id)c2.CGColor, (id)c3.CGColor];
         ctrlBox.layer.shadowColor = c1.CGColor;
         ctrlBox.layer.borderColor = c2.CGColor;
-        if (marqueeLbl)
-            marqueeLbl.textColor = [UIColor colorWithHue:hue saturation:0.5 brightness:1 alpha:0.92];
+        if (marqueeLbl) marqueeLbl.textColor = [UIColor colorWithHue:hue saturation:0.6 brightness:1 alpha:0.92];
         if (mergeBtn && isMain)
-            mergeBtn.backgroundColor = [UIColor colorWithHue:hue saturation:0.5 brightness:0.3 alpha:0.25];
+            mergeBtn.backgroundColor = [UIColor colorWithHue:hue saturation:0.5 brightness:0.3 alpha:0.3];
         UIView *dot = [ctrlBox viewWithTag:500];
         if (dot) dot.backgroundColor = isMain ? rgba(60, 200, 100, 0.8) : rgba(120, 130, 160, 0.3);
     });
@@ -501,17 +500,17 @@ static void sendAll(NSString *msg) {
 }
 
 + (UIImage *)thumbImage {
-    CGSize sz = CGSizeMake(14, 14);
-    UIGraphicsBeginImageContextWithOptions(sz, NO, 0);
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
-    CGContextSetShadowWithColor(ctx, CGSizeZero, 3, rgba(60, 130, 255, 0.4).CGColor);
-    CGContextSetFillColorWithColor(ctx, rgba(255, 255, 255, 0.85).CGColor);
-    CGContextFillEllipseInRect(ctx, CGRectMake(1, 1, 12, 12));
-    CGContextSetFillColorWithColor(ctx, rgba(60, 130, 255, 0.4).CGColor);
-    CGContextFillEllipseInRect(ctx, CGRectMake(3, 3, 8, 8));
-    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return img;
+    return [UIImage imageWithCGImage:({
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(13, 13), NO, 0);
+        CGContextRef ctx = UIGraphicsGetCurrentContext();
+        CGContextSetFillColorWithColor(ctx, rgba(255, 255, 255, 0.9).CGColor);
+        CGContextFillEllipseInRect(ctx, CGRectMake(0.5, 0.5, 12, 12));
+        CGContextSetFillColorWithColor(ctx, rgba(60, 130, 255, 0.3).CGColor);
+        CGContextFillEllipseInRect(ctx, CGRectMake(2.5, 2.5, 8, 8));
+        UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        img.CGImage;
+    })];
 }
 
 #pragma mark - Actions
