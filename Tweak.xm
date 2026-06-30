@@ -25,7 +25,7 @@ static dispatch_source_t topTimer = NULL;
 static dispatch_source_t rainbowTimer = NULL;
 static CAGradientLayer *accentLine = nil;
 static BOOL running = NO;
-static BOOL isMain = NO;
+static BOOL isMain = YES;
 static CGFloat currentDelay = 30.0;
 static int udpSock = -1;
 
@@ -396,6 +396,11 @@ static void udpSend(NSString *m) {
     [w addSubview:tapCircle];
     [w bringSubviewToFront:tapCircle];
 
+    [self updateMergeUI];
+    if (isMain) {
+        tapCircle.layer.borderColor = rgba(60, 200, 100, 0.6).CGColor;
+        tapCircle.layer.borderWidth = 2.5;
+    }
     udpInit();
     [self startRainbow];
     NSLog(@"[YLT] UI ready");
@@ -520,13 +525,11 @@ static void udpSend(NSString *m) {
     CGPoint t = [g translationInView:v.superview];
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [g setTranslation:CGPointZero inView:v.superview];
-    if (isMain) {
-        static CFTimeInterval lastPos = 0;
-        CFTimeInterval now = CACurrentMediaTime();
-        if (g.state == UIGestureRecognizerStateEnded || now - lastPos > 0.05) {
-            lastPos = now;
-            udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
-        }
+    static CFTimeInterval lastPos = 0;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (g.state == UIGestureRecognizerStateEnded || now - lastPos > 0.03) {
+        lastPos = now;
+        udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
     }
 }
 
