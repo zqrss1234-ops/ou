@@ -618,6 +618,8 @@ static void sendAll(NSString *msg) {
 #pragma mark - Constructor
 
 __attribute__((constructor)) static void init() {
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+    if (![bid hasPrefix:@"com.yalla.yallalite"]) return;
     NSLog(@"[YLT] Loading...");
     dispatch_async(dispatch_get_main_queue(), ^{ [Controller buildUI]; });
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
