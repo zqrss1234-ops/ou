@@ -87,9 +87,11 @@ static void udpInit(void) {
                         if (p.count == 2 && !isMain && tapCircle && tapCircle.superview)
                             tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
                     } else if ([m isEqualToString:@"RUN"]) {
-                        if (!isMain) { running = YES; [NSClassFromString(@"Tapper") performSelector:@selector(start)]; }
+                        if (!isMain) { running = YES; [NSClassFromString(@"Tapper") performSelector:@selector(start)];
+                            [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
                     } else if ([m isEqualToString:@"STOP"]) {
-                        if (!isMain) { running = NO; [NSClassFromString(@"Tapper") performSelector:@selector(stop)]; }
+                        if (!isMain) { running = NO; [NSClassFromString(@"Tapper") performSelector:@selector(stop)];
+                            [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
                     } else if ([m isEqualToString:@"TAP"]) {
                         if (!isMain) [NSClassFromString(@"Tapper") performSelector:@selector(doTap)];
                     }
@@ -145,22 +147,12 @@ static void udpSend(NSString *m) {
 
     if (!target || target == tapCircle) return;
 
-    UIControl *ctrl = nil;
-    if ([target isKindOfClass:[UIControl class]]) ctrl = (UIControl *)target;
-    else {
-        UIResponder *r = target.nextResponder;
-        while (r) { if ([r isKindOfClass:[UIControl class]]) { ctrl = (UIControl *)r; break; } r = r.nextResponder; }
-    }
+    UIView *hit = target;
+    while (hit && ![hit isKindOfClass:[UIControl class]]) hit = hit.superview;
+    UIControl *ctrl = (UIControl *)hit;
     if (ctrl) {
         [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
         [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
-    }
-
-    for (UIGestureRecognizer *gr in [target.gestureRecognizers copy]) {
-        if ([gr isKindOfClass:[UITapGestureRecognizer class]] && gr.enabled) {
-            gr.enabled = NO;
-            gr.enabled = YES;
-        }
     }
 
     UIView *fx = [[UIView alloc] initWithFrame:CGRectMake(0,0,16,16)];
@@ -257,20 +249,22 @@ static void udpSend(NSString *m) {
     marqueeBox.layer.cornerRadius = 16;
     marqueeBox.clipsToBounds = YES;
 
-    UILabel *marqueeLbl = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, [marqueeStr sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12 weight:UIFontWeightSemibold]}].width + 40, 32)];
-    marqueeLbl.text = [marqueeStr stringByAppendingString:marqueeStr];
+    UILabel *marqueeLbl = [[UILabel alloc] init];
+    NSString *singleTxt = marqueeStr;
+    CGSize singleSz = [singleTxt sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12 weight:UIFontWeightSemibold]}];
+    CGFloat singleW = singleSz.width + 24;
+    marqueeLbl.frame = CGRectMake(0, 0, singleW * 2, 32);
+    marqueeLbl.text = [singleTxt stringByAppendingString:singleTxt];
     marqueeLbl.textColor = rgba(225, 230, 245, 0.88);
     marqueeLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
     [marqueeBox addSubview:marqueeLbl];
 
-    CGFloat mw = marqueeLbl.frame.size.width / 2;
     CGFloat cw = marqueeBox.frame.size.width;
-    if (mw > cw) {
-        [UIView animateWithDuration:mw/20.0 delay:0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionRepeat animations:^{
-            marqueeLbl.transform = CGAffineTransformMakeTranslation(-mw, 0);
+    if (singleW > cw) {
+        [UIView animateWithDuration:singleW/22.0 delay:0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionRepeat animations:^{
+            marqueeLbl.transform = CGAffineTransformMakeTranslation(-singleW, 0);
         } completion:nil];
     }
-
     [ctrlBox addSubview:marqueeBox];
     yy += 38;
 
@@ -398,16 +392,24 @@ static void udpSend(NSString *m) {
 
 #pragma mark - Actions
 
-+ (void)toggleRun {
-    running = !running;
++ (void)updateRunUI {
+    if (!runBtn) return;
     if (running) {
         runBtn.backgroundColor = rgba(200, 60, 60, 1);
         [runBtn setTitle:@"■  إيقاف" forState:UIControlStateNormal];
-        [Tapper start];
-        udpSend(@"RUN");
     } else {
         runBtn.backgroundColor = rgba(40, 100, 230, 1);
         [runBtn setTitle:@"▶  تشغيل" forState:UIControlStateNormal];
+    }
+}
+
++ (void)toggleRun {
+    running = !running;
+    [self updateRunUI];
+    if (running) {
+        [Tapper start];
+        udpSend(@"RUN");
+    } else {
         [Tapper stop];
         udpSend(@"STOP");
     }
