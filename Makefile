@@ -9,6 +9,6 @@ YLTool_FILES = Tweak.xm
 YLTool_CFLAGS = -fobjc-arc -fobjc-arc-exceptions -Wno-deprecated-declarations -Os
 YLTool_LDFLAGS = -Wl,-dead_strip
 YLTool_ENTITLEMENTS = entitlements.plist
-YLTool_FRAMEWORKS = UIKit Foundation
+YLTool_FRAMEWORKS = UIKit Foundation QuartzCore
 
 include $(THEOS_MAKE_PATH)/tweak.mk
