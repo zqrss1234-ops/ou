@@ -667,8 +667,8 @@ static void sendAll(NSString *msg) {
 
 %hook UIApplication
 - (void)_handleApplicationSuspend:(id)arg {
-    if (ctrlBox) {
-        NSLog(@"[YLT] Blocking suspend");
+    if (running) {
+        NSLog(@"[YLT] Blocking suspend while running");
         return;
     }
     %orig(arg);
@@ -698,7 +698,6 @@ __attribute__((constructor)) static void init() {
         ensureOnTop();
     }];
     dispatch_async(dispatch_get_main_queue(), ^{
-        startBgTask();
         topTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
         dispatch_source_set_event_handler(topTimer, ^{ ensureOnTop(); });
