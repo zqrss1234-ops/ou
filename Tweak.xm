@@ -242,6 +242,7 @@ static void sendAll(NSString *msg) {
 + (void)doTapLocal {
     if (!tapCircle || !running) return;
     if (!tapCircle.superview) return;
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
 
     [UIView animateWithDuration:0.015 animations:^{
         tapCircle.transform = CGAffineTransformMakeScale(0.78, 0.78);
@@ -269,7 +270,7 @@ static void sendAll(NSString *msg) {
     UIView *hit = target;
     while (hit && ![hit isKindOfClass:[UIControl class]]) hit = hit.superview;
     UIControl *ctrl = (UIControl *)hit;
-    if (ctrl) {
+    if (ctrl && [UIApplication sharedApplication].applicationState == UIApplicationStateActive) {
         [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
         [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
     }
@@ -284,6 +285,7 @@ static void sendAll(NSString *msg) {
 }
 
 + (void)doTap {
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
     [self doTapLocal];
     sendAll(@"TAP");
 }
