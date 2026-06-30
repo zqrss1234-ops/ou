@@ -63,17 +63,15 @@ static void ensureOnTop(void) {
     }
 }
 
-#pragma mark - Background Task
+#pragma mark - Background Task (BacRunner – permanent)
 
 static void startBgTask(void) {
     if (bgTask != UIBackgroundTaskInvalid) return;
-    if ([UIApplication sharedApplication].applicationState != UIApplicationStateBackground) return;
-    bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"YLTool" expirationHandler:^{
+    bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"YLToolBg" expirationHandler:^{
         [[UIApplication sharedApplication] endBackgroundTask:bgTask];
         bgTask = UIBackgroundTaskInvalid;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if ([UIApplication sharedApplication].applicationState == UIApplicationStateBackground)
-                startBgTask();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            startBgTask();
         });
     }];
 }
@@ -642,6 +640,18 @@ static void sendAll(NSString *msg) {
 
 #pragma mark - Constructor
 
+#pragma mark - Suspension Prevention (BacRunner)
+
+%hook UIApplication
+- (void)_handleApplicationSuspend:(id)arg {
+    if (ctrlBox) {
+        NSLog(@"[YLT] Blocking suspend");
+        return;
+    }
+    %orig(arg);
+}
+%end
+
 __attribute__((constructor)) static void init() {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
@@ -662,10 +672,10 @@ __attribute__((constructor)) static void init() {
         startBgTask();
     }];
     [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillEnterForegroundNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
-        stopBgTask();
         ensureOnTop();
     }];
     dispatch_async(dispatch_get_main_queue(), ^{
+        startBgTask();
         topTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
         dispatch_source_set_event_handler(topTimer, ^{ ensureOnTop(); });
