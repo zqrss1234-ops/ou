@@ -21,6 +21,8 @@ static UIButton *runBtn = nil;
 static UIButton *linkBtn = nil;
 static dispatch_source_t tapTimer = NULL;
 static dispatch_source_t topTimer = NULL;
+static dispatch_source_t rainbowTimer = NULL;
+static CAGradientLayer *accentLine = nil;
 static BOOL running = NO;
 static BOOL isMain = NO;
 static CGFloat currentDelay = 30.0;
@@ -225,10 +227,10 @@ static void udpSend(NSString *m) {
     ctrlBox.tag = 100;
 
     // Top accent glow
-    CAGradientLayer *accentLine = [CAGradientLayer layer];
+    accentLine = [CAGradientLayer layer];
     accentLine.frame = CGRectMake(0, 0, bw, 2.5);
-    accentLine.colors = @[(id)rgba(60, 130, 255, 0.7).CGColor,
-                          (id)rgba(120, 80, 255, 0.4).CGColor,
+    accentLine.colors = @[(id)rgba(60, 130, 255, 0.8).CGColor,
+                          (id)rgba(120, 80, 255, 0.5).CGColor,
                           (id)rgba(60, 130, 255, 0).CGColor];
     accentLine.startPoint = CGPointMake(0, 0);
     accentLine.endPoint = CGPointMake(1, 0);
@@ -271,15 +273,15 @@ static void udpSend(NSString *m) {
     linkBtn.frame = CGRectMake(bw-24-10, yy+5, 26, 26);
     linkBtn.backgroundColor = rgba(40, 40, 65, 0.7);
     linkBtn.layer.cornerRadius = 13;
-    linkBtn.titleLabel.font = [UIFont systemFontOfSize:10];
-    [linkBtn setTitle:@"🔗" forState:UIControlStateNormal];
-    [linkBtn setTitleColor:rgba(160, 170, 200, 0.9) forState:UIControlStateNormal];
-    [linkBtn addTarget:self action:@selector(toggleLink) forControlEvents:UIControlEventTouchUpInside];
+    linkBtn.titleLabel.font = [UIFont boldSystemFontOfSize:9];
+    [linkBtn setTitle:@"دمج" forState:UIControlStateNormal];
+    [linkBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
+    [linkBtn addTarget:self action:@selector(toggleMerge) forControlEvents:UIControlEventTouchUpInside];
     linkBtn.tag = 500;
 
     [ctrlBox addSubview:marqueeBox];
     [ctrlBox addSubview:linkBtn];
-    [self updateLinkUI];
+    [self updateMergeUI];
     yy += 38;
 
     // ---- Speed Row ----
@@ -387,6 +389,22 @@ static void udpSend(NSString *m) {
     [w bringSubviewToFront:tapCircle];
 
     udpInit();
+
+    // Rainbow color cycling
+    static CGFloat hue = 0;
+    rainbowTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(rainbowTimer, DISPATCH_TIME_NOW, 0.5 * NSEC_PER_SEC, 0);
+    dispatch_source_set_event_handler(rainbowTimer, ^{
+        if (!accentLine || !ctrlBox) return;
+        hue += 1.0/14.0;
+        if (hue > 1) hue -= 1;
+        UIColor *c1 = [UIColor colorWithHue:hue saturation:0.9 brightness:0.9 alpha:0.8];
+        UIColor *c2 = [UIColor colorWithHue:fmod(hue+0.3,1) saturation:0.7 brightness:0.8 alpha:0.4];
+        accentLine.colors = @[(id)c1.CGColor, (id)c2.CGColor, (id)rgba(60,130,255,0).CGColor];
+        ctrlBox.layer.borderColor = [UIColor colorWithHue:hue saturation:0.6 brightness:0.5 alpha:0.3].CGColor;
+    });
+    dispatch_resume(rainbowTimer);
+
     NSLog(@"[YLT] UI ready");
 }
 
@@ -417,25 +435,26 @@ static void udpSend(NSString *m) {
     }
 }
 
-+ (void)updateLinkUI {
++ (void)updateMergeUI {
     if (!linkBtn) return;
     if (isMain) {
-        linkBtn.backgroundColor = rgba(60, 130, 255, 0.6);
-        [linkBtn setTitle:@"🔗" forState:UIControlStateNormal];
-        [linkBtn setTitleColor:rgba(200, 220, 255, 1) forState:UIControlStateNormal];
+        linkBtn.backgroundColor = rgba(60, 200, 100, 0.5);
+        [linkBtn setTitle:@"دمج" forState:UIControlStateNormal];
+        [linkBtn setTitleColor:rgba(100, 255, 150, 1) forState:UIControlStateNormal];
     } else {
         linkBtn.backgroundColor = rgba(40, 40, 65, 0.7);
-        [linkBtn setTitle:@"🔗" forState:UIControlStateNormal];
+        [linkBtn setTitle:@"دمج" forState:UIControlStateNormal];
         [linkBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
     }
 }
 
-+ (void)toggleLink {
++ (void)toggleMerge {
     isMain = !isMain;
-    [self updateLinkUI];
+    [self updateMergeUI];
     if (isMain) {
-        tapCircle.layer.borderColor = rgba(255, 200, 50, 0.7).CGColor;
-        tapCircle.layer.borderWidth = 2;
+        tapCircle.layer.borderColor = rgba(60, 200, 100, 0.7).CGColor;
+        tapCircle.layer.borderWidth = 2.5;
+        [self alert:@"تم دمج الحسابات ✓" msg:@"جميع النسخ مرتبطة بهذه النسخة"];
         udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         if (running) udpSend(@"RUN");
     } else {
@@ -489,7 +508,7 @@ static void udpSend(NSString *m) {
     if (isMain) {
         static CFTimeInterval lastPos = 0;
         CFTimeInterval now = CACurrentMediaTime();
-        if (g.state == UIGestureRecognizerStateEnded || now - lastPos > 0.08) {
+        if (g.state == UIGestureRecognizerStateEnded || now - lastPos > 0.05) {
             lastPos = now;
             udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
         }
@@ -499,7 +518,7 @@ static void udpSend(NSString *m) {
 + (void)setMaster:(UILongPressGestureRecognizer *)g {
     if (g.state == UIGestureRecognizerStateBegan) {
         isMain = !isMain;
-        [self updateLinkUI];
+        [self updateMergeUI];
         if (isMain) {
             tapCircle.layer.borderColor = rgba(255, 200, 50, 0.7).CGColor;
             tapCircle.layer.borderWidth = 2;
