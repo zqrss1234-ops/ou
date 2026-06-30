@@ -613,21 +613,9 @@ static void sendAll(NSString *msg) {
 
 @end
 
-#pragma mark - Constructor with bundle safety
+#pragma mark - Constructor
 
 __attribute__((constructor)) static void init() {
-    NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
-    BOOL valid = NO;
-    NSArray *allowed = @[
-        @"com.yalla.yallalite", @"com.yalla.lite", @"com.yalla.YallaLite",
-        @"com.yallalite", @"com.yalla.live", @"com.yalla.app",
-        @"com.yalla.Yalla", @"com.atheer.yallalite", @"com.yalla.yallalite.adhoc",
-        @"com.yalla.yallalite.enterprise", @"com.yalla.vlite", @"com.yalla.YLLite"
-    ];
-    for (NSString *aid in allowed)
-        if ([bundleID isEqualToString:aid]) { valid = YES; break; }
-    if (!valid) return;
-
     NSLog(@"[YLT] Loading...");
     dispatch_async(dispatch_get_main_queue(), ^{ [Controller buildUI]; });
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
