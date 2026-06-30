@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
 #import <sys/socket.h>
+#import <sys/select.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
 #import <notify.h>
@@ -77,10 +79,17 @@ static void startBgTask(void) {
     __block UIBackgroundTaskIdentifier task = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"YLToolBg" expirationHandler:^{
         [[UIApplication sharedApplication] endBackgroundTask:task];
         dispatch_async(dispatch_get_main_queue(), ^{
+            if (bgTask == task) bgTask = UIBackgroundTaskInvalid;
             startBgTask();
         });
     }];
-    if (task != UIBackgroundTaskInvalid) bgTask = task;
+    if (task != UIBackgroundTaskInvalid) {
+        bgTask = task;
+    } else {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            startBgTask();
+        });
+    }
 }
 
 #pragma mark - Forward Declarations
