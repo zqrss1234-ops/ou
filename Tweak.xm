@@ -50,12 +50,7 @@ static UIWindow *activeWindow(void) {
 
 #pragma mark - Forward Declarations
 
-@interface YLTapSync : NSObject
-+ (void)performLocalTap;
-+ (void)startTapping;
-+ (void)stopTapping;
-@end
-
+@class YLTapSync;
 static void udpInit(void);
 static void udpSend(NSString *msg);
 
@@ -164,7 +159,7 @@ static void udpInit(void) {
                         }
                     } else if ([msg hasPrefix:@"TAP"]) {
                         if (!isFirstInstance && circleView) {
-                            [YLTapSync performLocalTap];
+                            [NSClassFromString(@"YLTapSync") performSelector:@selector(performLocalTap)];
                         }
                     }
                 });
