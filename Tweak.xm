@@ -76,12 +76,6 @@ static void startBgTask(void) {
     }];
 }
 
-static void stopBgTask(void) {
-    if (bgTask == UIBackgroundTaskInvalid) return;
-    [[UIApplication sharedApplication] endBackgroundTask:bgTask];
-    bgTask = UIBackgroundTaskInvalid;
-}
-
 #pragma mark - Forward Declarations
 
 @interface Tapper : NSObject
