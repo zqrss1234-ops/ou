@@ -2,6 +2,7 @@
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
+#import <notify.h>
 
 #pragma mark - Names
 
@@ -60,7 +61,46 @@ static void ensureOnTop(void) {
     }
 }
 
-#pragma mark - UDP
+#pragma mark - Darwin IPC (same device)
+
+static int darwinPosToken = 0;
+static int darwinRunToken = 0;
+static int darwinStopToken = 0;
+static int darwinTapToken = 0;
+
+static void darwinInit(void) {
+    notify_register_dispatch("com.yltool.pos", &darwinPosToken, dispatch_get_main_queue(), ^(int t) {
+        uint64_t state;
+        notify_get_state(t, &state);
+        CGFloat x = (CGFloat)(state >> 32) / 10.0;
+        CGFloat y = (CGFloat)(state & 0xFFFFFFFF) / 10.0;
+        if (tapCircle && tapCircle.superview)
+            tapCircle.center = CGPointMake(x, y);
+    });
+    notify_register_dispatch("com.yltool.run", &darwinRunToken, dispatch_get_main_queue(), ^(int t) {
+        if (!running) { running = YES; [NSClassFromString(@"Tapper") performSelector:@selector(start)];
+            [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
+    });
+    notify_register_dispatch("com.yltool.stop", &darwinStopToken, dispatch_get_main_queue(), ^(int t) {
+        if (running) { running = NO; [NSClassFromString(@"Tapper") performSelector:@selector(stop)];
+            [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
+    });
+    notify_register_dispatch("com.yltool.tap", &darwinTapToken, dispatch_get_main_queue(), ^(int t) {
+        [NSClassFromString(@"Tapper") performSelector:@selector(doTap)];
+    });
+}
+
+static void darwinPostPos(CGFloat x, CGFloat y) {
+    uint64_t state = ((uint64_t)(uint32_t)(x * 10) << 32) | (uint64_t)(uint32_t)(y * 10);
+    notify_set_state(darwinPosToken, state);
+    notify_post("com.yltool.pos");
+}
+
+static void darwinPost(const char *name) {
+    notify_post(name);
+}
+
+#pragma mark - UDP IPC (cross device)
 
 static void udpInit(void) {
     udpSock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -68,7 +108,7 @@ static void udpInit(void) {
     int opt = 1;
     setsockopt(udpSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     setsockopt(udpSock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
-    struct timeval tv = { .tv_sec = 0, .tv_usec = 100000 };
+    struct timeval tv = { .tv_sec = 0, .tv_usec = 50000 };
     setsockopt(udpSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -115,6 +155,22 @@ static void udpSend(NSString *m) {
     sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&bc, sizeof(bc));
 }
 
+#pragma mark - Universal Send
+
+static void sendAll(NSString *msg) {
+    if ([msg hasPrefix:@"POS:"]) {
+        NSArray *p = [[msg substringFromIndex:4] componentsSeparatedByString:@","];
+        if (p.count == 2) darwinPostPos([p[0] floatValue], [p[1] floatValue]);
+    } else if ([msg isEqualToString:@"RUN"]) {
+        darwinPost("com.yltool.run");
+    } else if ([msg isEqualToString:@"STOP"]) {
+        darwinPost("com.yltool.stop");
+    } else if ([msg isEqualToString:@"TAP"]) {
+        darwinPost("com.yltool.tap");
+    }
+    udpSend(msg);
+}
+
 #pragma mark - Tap Engine
 
 @interface Tapper : NSObject
@@ -134,7 +190,7 @@ static void udpSend(NSString *m) {
     } completion:^(BOOL f) {
         [UIView animateWithDuration:0.015 animations:^{
             tapCircle.transform = CGAffineTransformIdentity;
-            tapCircle.backgroundColor = rgba(16, 16, 16, 0.95);
+            tapCircle.backgroundColor = rgba(14, 14, 14, 0.95);
         }];
     }];
 
@@ -167,7 +223,7 @@ static void udpSend(NSString *m) {
         fx.alpha = 0; fx.transform = CGAffineTransformMakeScale(4, 4);
     } completion:^(BOOL f) { [fx removeFromSuperview]; }];
 
-    udpSend(@"TAP");
+    sendAll(@"TAP");
 }
 
 + (void)start {
@@ -208,7 +264,6 @@ static void udpSend(NSString *m) {
     CGFloat sw = UIScreen.mainScreen.bounds.size.width;
     CGFloat sh = UIScreen.mainScreen.bounds.size.height;
 
-    // Marquee text
     NSMutableString *marqueeStr = [NSMutableString string];
     for (NSString *n in accountNames) {
         [marqueeStr appendFormat:@"  ◉  %@", n];
@@ -227,7 +282,6 @@ static void udpSend(NSString *m) {
     ctrlBox.layer.shadowRadius = 35;
     ctrlBox.tag = 100;
 
-    // Rainbow accent line
     accentLine = [CAGradientLayer layer];
     accentLine.frame = CGRectMake(0, 0, bw, 3);
     accentLine.colors = @[(id)rgba(255, 80, 80, 0.8).CGColor,
@@ -237,7 +291,6 @@ static void udpSend(NSString *m) {
     accentLine.endPoint = CGPointMake(1, 0);
     [ctrlBox.layer addSublayer:accentLine];
 
-    // Inner glow
     CAGradientLayer *innerGlow = [CAGradientLayer layer];
     innerGlow.frame = ctrlBox.bounds;
     innerGlow.colors = @[(id)rgba(40, 40, 70, 0.08).CGColor, (id)rgba(6, 6, 12, 0).CGColor];
@@ -247,7 +300,7 @@ static void udpSend(NSString *m) {
 
     CGFloat yy = 10;
 
-    // ---- Marquee Names (Fast + Rainbow) ----
+    // ---- Marquee Names ----
     UIView *marqueeBox = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 34)];
     marqueeBox.backgroundColor = rgba(12, 12, 24, 0.6);
     marqueeBox.layer.cornerRadius = 17;
@@ -267,7 +320,7 @@ static void udpSend(NSString *m) {
 
     CGFloat cw = marqueeBox.frame.size.width;
     if (singleW > cw) {
-        [UIView animateWithDuration:singleW/30.0 delay:0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionRepeat animations:^{
+        [UIView animateWithDuration:singleW/40.0 delay:0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionRepeat animations:^{
             marqueeLbl.transform = CGAffineTransformMakeTranslation(-singleW, 0);
         } completion:nil];
     }
@@ -289,7 +342,6 @@ static void udpSend(NSString *m) {
     [ctrlBox addSubview:delayLabel];
     yy += 16;
 
-    // Slider
     delaySlider = [[UISlider alloc] initWithFrame:CGRectMake(10, yy, bw-20, 22)];
     delaySlider.minimumValue = 5;
     delaySlider.maximumValue = 500;
@@ -350,20 +402,19 @@ static void udpSend(NSString *m) {
     footer.textAlignment = NSTextAlignmentCenter;
     [ctrlBox addSubview:footer];
 
-    // Drag
     UIPanGestureRecognizer *dragG = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragItem:)];
     [ctrlBox addGestureRecognizer:dragG];
 
     [w addSubview:ctrlBox];
     [w bringSubviewToFront:ctrlBox];
 
-    // ---- Tap Circle ----
+    // ---- Tap Circle (no number) ----
     CGFloat cs = 46, cx = (sw-cs)/2, cy = sh * 0.58;
     tapCircle = [[UIView alloc] initWithFrame:CGRectMake(cx, cy, cs, cs)];
     tapCircle.backgroundColor = rgba(14, 14, 14, 0.95);
     tapCircle.layer.cornerRadius = cs/2;
-    tapCircle.layer.borderColor = rgba(255, 255, 255, 0.1).CGColor;
-    tapCircle.layer.borderWidth = 1.5;
+    tapCircle.layer.borderColor = rgba(60, 200, 100, 0.6).CGColor;
+    tapCircle.layer.borderWidth = 2.5;
     tapCircle.layer.shadowColor = UIColor.blackColor.CGColor;
     tapCircle.layer.shadowOpacity = 0.5;
     tapCircle.layer.shadowOffset = CGSizeMake(0, 0);
@@ -379,13 +430,6 @@ static void udpSend(NSString *m) {
     oring.userInteractionEnabled = NO;
     [tapCircle addSubview:oring];
 
-    UILabel *tl = [[UILabel alloc] initWithFrame:tapCircle.bounds];
-    tl.text = @"515";
-    tl.textColor = rgba(255, 255, 255, 0.5);
-    tl.font = [UIFont boldSystemFontOfSize:16];
-    tl.textAlignment = NSTextAlignmentCenter;
-    [tapCircle addSubview:tl];
-
     UIPanGestureRecognizer *cg = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragCircle:)];
     [tapCircle addGestureRecognizer:cg];
 
@@ -397,10 +441,7 @@ static void udpSend(NSString *m) {
     [w bringSubviewToFront:tapCircle];
 
     [self updateMergeUI];
-    if (isMain) {
-        tapCircle.layer.borderColor = rgba(60, 200, 100, 0.6).CGColor;
-        tapCircle.layer.borderWidth = 2.5;
-    }
+    darwinInit();
     udpInit();
     [self startRainbow];
     NSLog(@"[YLT] UI ready");
@@ -421,10 +462,8 @@ static void udpSend(NSString *m) {
         ctrlBox.layer.shadowColor = c1.CGColor;
         ctrlBox.layer.borderColor = c2.CGColor;
         if (marqueeLbl) marqueeLbl.textColor = c1;
-        if (mergeBtn) {
-            if (isMain) {
-                mergeBtn.backgroundColor = [UIColor colorWithHue:hue saturation:0.5 brightness:0.3 alpha:0.3];
-            }
+        if (mergeBtn && isMain) {
+            mergeBtn.backgroundColor = [UIColor colorWithHue:hue saturation:0.5 brightness:0.3 alpha:0.3];
         }
     });
     dispatch_resume(rainbowTimer);
@@ -475,8 +514,8 @@ static void udpSend(NSString *m) {
         tapCircle.layer.borderColor = rgba(60, 200, 100, 0.6).CGColor;
         tapCircle.layer.borderWidth = 2.5;
         [self alert:@"تم دمج الحسابات ✓" msg:@"جميع النسخ ستتبع هذه النسخة"];
-        udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
-        if (running) udpSend(@"RUN");
+        sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
+        if (running) sendAll(@"RUN");
     } else {
         tapCircle.layer.borderColor = rgba(255, 255, 255, 0.1).CGColor;
         tapCircle.layer.borderWidth = 1.5;
@@ -488,10 +527,10 @@ static void udpSend(NSString *m) {
     [self updateRunUI];
     if (running) {
         [Tapper start];
-        udpSend(@"RUN");
+        sendAll(@"RUN");
     } else {
         [Tapper stop];
-        udpSend(@"STOP");
+        sendAll(@"STOP");
     }
 }
 
@@ -529,7 +568,7 @@ static void udpSend(NSString *m) {
     CFTimeInterval now = CACurrentMediaTime();
     if (g.state == UIGestureRecognizerStateEnded || now - lastPos > 0.03) {
         lastPos = now;
-        udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
+        sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
     }
 }
 
@@ -541,7 +580,7 @@ static void udpSend(NSString *m) {
             tapCircle.layer.borderColor = rgba(60, 200, 100, 0.6).CGColor;
             tapCircle.layer.borderWidth = 2.5;
             [self alert:@"✓ رئيسي" msg:@"النسخة الرئيسية - تتحكم بجميع النسخ"];
-            udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
+            sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         } else {
             tapCircle.layer.borderColor = rgba(255, 255, 255, 0.1).CGColor;
             tapCircle.layer.borderWidth = 1.5;
