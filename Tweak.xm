@@ -212,10 +212,10 @@ static void udpSend(NSString *m) {
     }
 
     // ---- Control Box (Square Rectangle) ----
-    CGFloat bw = 200, bh = 170, bx = (sw-bw)/2, by = sh * 0.15;
+    CGFloat bw = 220, bh = 185, bx = (sw-bw)/2, by = sh * 0.15;
     ctrlBox = [[UIView alloc] initWithFrame:CGRectMake(bx, by, bw, bh)];
-    ctrlBox.backgroundColor = rgba(14, 14, 22, 0.93);
-    ctrlBox.layer.cornerRadius = 22;
+    ctrlBox.backgroundColor = rgba(8, 8, 12, 0.95);
+    ctrlBox.layer.cornerRadius = 24;
     ctrlBox.layer.borderColor = rgba(60, 60, 90, 0.35).CGColor;
     ctrlBox.layer.borderWidth = 0.5;
     ctrlBox.layer.shadowColor = UIColor.blackColor.CGColor;
@@ -245,19 +245,19 @@ static void udpSend(NSString *m) {
     CGFloat yy = 12;
 
     // ---- Marquee Names ----
-    UIView *marqueeBox = [[UIView alloc] initWithFrame:CGRectMake(12, yy, bw-24, 32)];
-    marqueeBox.backgroundColor = rgba(28, 28, 50, 0.55);
-    marqueeBox.layer.cornerRadius = 16;
+    UIView *marqueeBox = [[UIView alloc] initWithFrame:CGRectMake(12, yy, bw-24, 34)];
+    marqueeBox.backgroundColor = rgba(18, 18, 30, 0.6);
+    marqueeBox.layer.cornerRadius = 17;
     marqueeBox.clipsToBounds = YES;
 
     UILabel *marqueeLbl = [[UILabel alloc] init];
     NSString *singleTxt = marqueeStr;
-    CGSize singleSz = [singleTxt sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12 weight:UIFontWeightSemibold]}];
+    CGSize singleSz = [singleTxt sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:13 weight:UIFontWeightSemibold]}];
     CGFloat singleW = singleSz.width + 24;
-    marqueeLbl.frame = CGRectMake(0, 0, singleW * 2, 32);
+    marqueeLbl.frame = CGRectMake(0, 0, singleW * 2, 34);
     marqueeLbl.text = [singleTxt stringByAppendingString:singleTxt];
-    marqueeLbl.textColor = rgba(225, 230, 245, 0.88);
-    marqueeLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    marqueeLbl.textColor = rgba(235, 240, 255, 0.95);
+    marqueeLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
     [marqueeBox addSubview:marqueeLbl];
 
     CGFloat cw = marqueeBox.frame.size.width;
@@ -268,9 +268,9 @@ static void udpSend(NSString *m) {
     }
 
     linkBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    linkBtn.frame = CGRectMake(bw-24-10, yy+4, 24, 24);
+    linkBtn.frame = CGRectMake(bw-24-10, yy+5, 26, 26);
     linkBtn.backgroundColor = rgba(40, 40, 65, 0.7);
-    linkBtn.layer.cornerRadius = 12;
+    linkBtn.layer.cornerRadius = 13;
     linkBtn.titleLabel.font = [UIFont systemFontOfSize:10];
     [linkBtn setTitle:@"🔗" forState:UIControlStateNormal];
     [linkBtn setTitleColor:rgba(160, 170, 200, 0.9) forState:UIControlStateNormal];
@@ -486,8 +486,14 @@ static void udpSend(NSString *m) {
     CGPoint t = [g translationInView:v.superview];
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [g setTranslation:CGPointZero inView:v.superview];
-    if (g.state == UIGestureRecognizerStateEnded && isMain)
-        udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
+    if (isMain) {
+        static CFTimeInterval lastPos = 0;
+        CFTimeInterval now = CACurrentMediaTime();
+        if (g.state == UIGestureRecognizerStateEnded || now - lastPos > 0.08) {
+            lastPos = now;
+            udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
+        }
+    }
 }
 
 + (void)setMaster:(UILongPressGestureRecognizer *)g {
