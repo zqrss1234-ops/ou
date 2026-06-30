@@ -10,7 +10,6 @@ static NSArray<NSString *> *accountNames = @[
 
 #pragma mark - Global State
 
-static UIWindow *tweakWindow = nil;
 static UIView *mainContainer = nil;
 static UIView *minimizedContainer = nil;
 static UIButton *toggleBtn = nil;
@@ -25,7 +24,30 @@ static UIView *circleView = nil;
 static UILabel *circleLabel = nil;
 static dispatch_source_t tapTimer = NULL;
 
-#pragma mark - Forward Declarations
+#pragma mark - Window Helper
+
+static UIWindow *keyWindowHelper(void) {
+    if (@available(iOS 13.0, *)) {
+        NSSet<UIScene *> *scenes = [UIApplication sharedApplication].connectedScenes;
+        for (UIScene *scene in scenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
+                UIWindow *w = [(UIWindowScene *)scene windows].firstObject;
+                if (w && !w.hidden) return w;
+            }
+        }
+    }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    UIWindow *w = [[UIApplication sharedApplication] keyWindow];
+    if (w && !w.hidden) return w;
+#pragma clang diagnostic pop
+    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+        if (!w.hidden && w.rootViewController) return w;
+    }
+    return nil;
+}
+
+#pragma mark - Follow Manager
 
 @interface YLTFollowManager : NSObject
 + (instancetype)sharedManager;
@@ -33,16 +55,12 @@ static dispatch_source_t tapTimer = NULL;
 - (void)performFollowWithDelay:(CGFloat)delay;
 @end
 
-#pragma mark - Follow Manager (Core Logic)
-
 @implementation YLTFollowManager
 
 + (instancetype)sharedManager {
     static YLTFollowManager *instance = nil;
     static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [[YLTFollowManager alloc] init];
-    });
+    dispatch_once(&onceToken, ^{ instance = [[YLTFollowManager alloc] init]; });
     return instance;
 }
 
@@ -77,30 +95,31 @@ static dispatch_source_t tapTimer = NULL;
 @implementation YLTUIHelper
 
 + (void)setupTweakUI {
+    UIWindow *keyWindow = keyWindowHelper();
+    if (!keyWindow) {
+        NSLog(@"[YLTool] No key window available, retrying in 1s...");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self setupTweakUI];
+        });
+        return;
+    }
+
+    NSLog(@"[YLTool] Got key window: %@, setting up UI", keyWindow);
+
     CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
-
-    // ---- Main Window ----
-    tweakWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    tweakWindow.windowLevel = UIWindowLevelAlert + 100;
-    tweakWindow.backgroundColor = [UIColor clearColor];
-    tweakWindow.userInteractionEnabled = YES;
-
-    // ---- Layout Constants ----
     CGFloat cw = 280;
     CGFloat cx = (screenWidth - cw) / 2;
     CGFloat cy = 80;
     CGFloat pad = 12;
     CGFloat gap = 8;
 
-    // ---- Calculate Badge Layout First ----
+    // Calculate badge layout
     CGFloat bX = pad;
     CGFloat bY = pad + 2;
     CGFloat bH = 28;
     CGFloat bGapX = 6;
     CGFloat bGapY = 6;
     CGFloat bMaxX = cw - pad;
-
-    // Store badge frames (name, x, y, w)
     NSMutableArray *badgeLayout = [NSMutableArray array];
     for (NSString *name in accountNames) {
         CGSize ts = [name sizeWithAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightMedium]}];
@@ -112,7 +131,7 @@ static dispatch_source_t tapTimer = NULL;
     }
     CGFloat namesBottom = bY + bH + 8;
 
-    // ---- Container Height ----
+    // Container height
     CGFloat toggleH = 42;
     CGFloat sliderTitleH = 18;
     CGFloat sliderH = 30;
@@ -123,7 +142,6 @@ static dispatch_source_t tapTimer = NULL;
                  sliderTitleH + sliderH + speedLabelH + gap +
                  sepH + gap + mergeH + pad;
 
-    // ---- Expanded Container ----
     mainContainer = [[UIView alloc] initWithFrame:CGRectMake(cx, cy, cw, ch)];
     mainContainer.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.96];
     mainContainer.layer.cornerRadius = 14;
@@ -132,7 +150,7 @@ static dispatch_source_t tapTimer = NULL;
     mainContainer.clipsToBounds = YES;
     mainContainer.tag = 100;
 
-    // ---- Add Badges ----
+    // Add badges
     for (NSDictionary *item in badgeLayout) {
         CGFloat x = [item[@"x"] floatValue];
         CGFloat y = [item[@"y"] floatValue];
@@ -151,7 +169,6 @@ static dispatch_source_t tapTimer = NULL;
         [mainContainer addSubview:badge];
     }
 
-    // ---- Y Offset Tracker ----
     CGFloat yOff = namesBottom + gap;
 
     // Separator 1
@@ -160,7 +177,7 @@ static dispatch_source_t tapTimer = NULL;
     [mainContainer addSubview:sep1];
     yOff += sepH + gap;
 
-    // ---- Toggle Button (تشغيل / إيقاف) ----
+    // Toggle Button
     toggleBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     toggleBtn.frame = CGRectMake(20, yOff, cw - 40, toggleH);
     toggleBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.75 blue:0.3 alpha:1.0];
@@ -172,7 +189,7 @@ static dispatch_source_t tapTimer = NULL;
     [mainContainer addSubview:toggleBtn];
     yOff += toggleH + gap;
 
-    // ---- Speed Slider ----
+    // Speed Slider
     UILabel *sliderTitle = [[UILabel alloc] initWithFrame:CGRectMake(20, yOff, cw - 40, sliderTitleH)];
     sliderTitle.text = @"سرعة MS";
     sliderTitle.textColor = [UIColor lightGrayColor];
@@ -206,7 +223,7 @@ static dispatch_source_t tapTimer = NULL;
     [mainContainer addSubview:sep2];
     yOff += sepH + gap;
 
-    // ---- Merge Button (دمج الحسابات) ----
+    // Merge Button
     mergeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     mergeBtn.frame = CGRectMake(20, yOff, cw - 40, mergeH);
     mergeBtn.backgroundColor = [UIColor colorWithRed:0.9 green:0.45 blue:0.1 alpha:1.0];
@@ -217,7 +234,7 @@ static dispatch_source_t tapTimer = NULL;
     [mergeBtn addTarget:self action:@selector(mergeAccounts) forControlEvents:UIControlEventTouchUpInside];
     [mainContainer addSubview:mergeBtn];
 
-    // ---- Hide Button (اخفاء القائمة) ----
+    // Hide Button
     UIButton *hideBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     hideBtn.frame = CGRectMake(cw - 38, 6, 28, 28);
     hideBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.8];
@@ -228,7 +245,7 @@ static dispatch_source_t tapTimer = NULL;
     [hideBtn addTarget:self action:@selector(hidePanel) forControlEvents:UIControlEventTouchUpInside];
     [mainContainer addSubview:hideBtn];
 
-    // ---- Minimized Container ----
+    // Minimized Container
     CGFloat mcw = 80;
     CGFloat mch = 80;
     minimizedContainer = [[UIView alloc] initWithFrame:CGRectMake(cx + cw - mcw, cy, mcw, mch)];
@@ -239,7 +256,6 @@ static dispatch_source_t tapTimer = NULL;
     minimizedContainer.hidden = YES;
     minimizedContainer.tag = 200;
 
-    // Minimized arrow button
     UIButton *arrowBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     arrowBtn.frame = CGRectMake(10, 10, 60, 60);
     arrowBtn.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.9];
@@ -250,7 +266,7 @@ static dispatch_source_t tapTimer = NULL;
     [arrowBtn addTarget:self action:@selector(showPanel) forControlEvents:UIControlEventTouchUpInside];
     [minimizedContainer addSubview:arrowBtn];
 
-    // ---- Draggable Circle (515) ----
+    // Draggable Circle
     CGFloat circleSize = 60;
     CGFloat circleX = (screenWidth - circleSize) / 2;
     CGFloat circleY = cy + ch + 30;
@@ -269,15 +285,15 @@ static dispatch_source_t tapTimer = NULL;
     circleLabel.textAlignment = NSTextAlignmentCenter;
     [circleView addSubview:circleLabel];
 
-    // Pan gesture for dragging
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[YLTUIHelper class] action:@selector(dragCircle:)];
     [circleView addGestureRecognizer:pan];
 
-    // Add to window
-    [tweakWindow addSubview:mainContainer];
-    [tweakWindow addSubview:minimizedContainer];
-    [tweakWindow addSubview:circleView];
-    tweakWindow.hidden = NO;
+    // Add ALL views to the key window
+    [keyWindow addSubview:mainContainer];
+    [keyWindow addSubview:minimizedContainer];
+    [keyWindow addSubview:circleView];
+
+    NSLog(@"[YLTool] UI setup complete - added to window: %@", keyWindow);
 }
 
 #pragma mark - Circle Drag
@@ -300,23 +316,22 @@ static dispatch_source_t tapTimer = NULL;
     if (interval < 0.005) interval = 0.005;
     tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, interval * NSEC_PER_SEC, 0);
-    dispatch_source_set_event_handler(tapTimer, ^{
-        [self performTap];
-    });
+    dispatch_source_set_event_handler(tapTimer, ^{ [self performTap]; });
     dispatch_resume(tapTimer);
+    NSLog(@"[YLTool] Tapping started at interval: %.3f", interval);
 }
 
 + (void)stopTapping {
     if (tapTimer) {
         dispatch_source_cancel(tapTimer);
         tapTimer = NULL;
+        NSLog(@"[YLTool] Tapping stopped");
     }
 }
 
 + (void)performTap {
     if (!circleView || !isRunning) return;
 
-    // Animate tap press
     [UIView animateWithDuration:0.03 animations:^{
         circleView.transform = CGAffineTransformMakeScale(0.8, 0.8);
         circleView.backgroundColor = [UIColor colorWithRed:1.0 green:0.5 blue:0.2 alpha:0.9];
@@ -327,40 +342,19 @@ static dispatch_source_t tapTimer = NULL;
         }];
     }];
 
-    // Get key window (iOS 13+ compatible)
-    UIWindow *keyWindow = nil;
-    if (@available(iOS 13.0, *)) {
-        NSSet<UIScene *> *scenes = [UIApplication sharedApplication].connectedScenes;
-        for (UIScene *scene in scenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
-                keyWindow = [(UIWindowScene *)scene windows].firstObject;
-                break;
-            }
-        }
-    }
-    if (!keyWindow) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        keyWindow = [[UIApplication sharedApplication] keyWindow];
-#pragma clang diagnostic pop
-    }
+    UIWindow *keyWindow = keyWindowHelper();
     if (!keyWindow) return;
 
-    // Convert circle center to key window coordinates
     CGPoint tapPoint = [circleView convertPoint:circleView.center toView:keyWindow];
-
-    // Find the view at tap point
     UIView *targetView = [keyWindow hitTest:tapPoint withEvent:nil];
     if (!targetView) return;
     if (targetView == circleView || [targetView isDescendantOfView:mainContainer] || [targetView isDescendantOfView:minimizedContainer]) return;
 
-    // Simulate UIControl tap
     if ([targetView isKindOfClass:[UIControl class]]) {
         UIControl *control = (UIControl *)targetView;
         [control sendActionsForControlEvents:UIControlEventTouchUpInside];
     }
 
-    // Flash effect on tap point
     UIView *flash = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 20, 20)];
     flash.center = tapPoint;
     flash.backgroundColor = [UIColor whiteColor];
@@ -371,9 +365,7 @@ static dispatch_source_t tapTimer = NULL;
     [UIView animateWithDuration:0.2 animations:^{
         flash.alpha = 0;
         flash.transform = CGAffineTransformMakeScale(2, 2);
-    } completion:^(BOOL finished) {
-        [flash removeFromSuperview];
-    }];
+    } completion:^(BOOL finished) { [flash removeFromSuperview]; }];
 }
 
 #pragma mark - Toggle Run/Stop
@@ -395,26 +387,19 @@ static dispatch_source_t tapTimer = NULL;
 
 + (void)speedChanged {
     CGFloat val = speedSlider.value;
-    // Round to 2 decimal places
     val = round(val * 100.0) / 100.0;
     speedSlider.value = val;
     currentDelay = val;
     speedValueLabel.text = [NSString stringWithFormat:@"%.2f ثانية", val];
-    if (isRunning) {
-        [self stopTapping];
-        [self startTapping];
-    }
+    if (isRunning) { [self stopTapping]; [self startTapping]; }
 }
 
 #pragma mark - Merge Accounts
 
 + (void)mergeAccounts {
     [[YLTFollowManager sharedManager] mergeAllAccounts];
-
-    // Show success alert
     [self showAlertWithTitle:@"✓ تم الدمج" message:@"تم ربط جميع الحسابات بنجاح"];
 
-    // Visual feedback
     mergeBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.6 blue:0.3 alpha:1.0];
     [mergeBtn setTitle:@"✓ تم الربط" forState:UIControlStateNormal];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -440,74 +425,65 @@ static dispatch_source_t tapTimer = NULL;
 #pragma mark - Alert Helper
 
 + (void)showAlertWithTitle:(NSString *)title message:(NSString *)message {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
-                                                                   message:message
-                                                            preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-
-    UIViewController *rootVC = nil;
-    UIWindow *keyWindow = nil;
-    if (@available(iOS 13.0, *)) {
-        NSSet<UIScene *> *scenes = [UIApplication sharedApplication].connectedScenes;
-        for (UIScene *scene in scenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
-                keyWindow = [(UIWindowScene *)scene windows].firstObject;
-                break;
-            }
-        }
+    UIWindow *keyWindow = keyWindowHelper();
+    UIViewController *rootVC = keyWindow.rootViewController;
+    if (rootVC) {
+        [rootVC presentViewController:alert animated:YES completion:nil];
     }
-    if (!keyWindow) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        keyWindow = [[UIApplication sharedApplication] keyWindow];
-#pragma clang diagnostic pop
-    }
-    rootVC = keyWindow.rootViewController;
-    if (!rootVC) rootVC = tweakWindow.rootViewController;
-    if (!rootVC) return;
-    [rootVC presentViewController:alert animated:YES completion:nil];
 }
 
 @end
 
 #pragma mark - Constructor
 
-%ctor {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+static void initializeTweak(void) {
+    NSLog(@"[YLTool] Constructor called, setting up observers...");
+    // Try immediately
+    dispatch_async(dispatch_get_main_queue(), ^{
         [YLTUIHelper setupTweakUI];
     });
+    // Also observe for new windows (covers late window creation)
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
+        UIWindow *w = note.object;
+        if (w && !w.hidden && [w isKindOfClass:[UIWindow class]] && w.rootViewController) {
+            static dispatch_once_t once;
+            dispatch_once(&once, ^{
+                NSLog(@"[YLTool] Window became visible, setting up UI...");
+                [YLTUIHelper setupTweakUI];
+            });
+        }
+    }];
 }
 
-#pragma mark - YallaLite Hooks (Placeholder - Customize as needed)
+%ctor {
+    initializeTweak();
+}
 
-// Replace "YLLFollowManager" and followUser: below with actual YallaLite classes/methods.
-// Use `class-dump` or `nm` on the YallaLite binary to find real class/method names.
+#pragma mark - YallaLite Hooks (Placeholder)
+
+// Uncomment and replace with actual YallaLite classes/methods from class-dump:
+/*
+%hook YLLFollowManager
+- (void)followUser:(NSString *)userId {
+    %orig;
+    NSLog(@"[YLTool] followUser hooked: %@", userId);
+}
+- (void)unfollowUser:(NSString *)userId {
+    %orig;
+    NSLog(@"[YLTool] unfollowUser hooked: %@", userId);
+}
+%end
+*/
 
 /*
- %hook YLLFollowManager
-
- - (void)followUser:(NSString *)userId {
-     %orig;
-     NSLog(@"[YLTool] followUser hooked: %@", userId);
- }
-
- - (void)unfollowUser:(NSString *)userId {
-     %orig;
-     NSLog(@"[YLTool] unfollowUser hooked: %@", userId);
- }
-
- %end
- */
-
-/*
- %hook YLLNetworkManager
-
- - (void)sendFollowRequestWithUserId:(NSString *)userId completion:(void(^)(BOOL))completion {
-     %orig;
-     if (accountsMerged) {
-         NSLog(@"[YLTool] Auto-follow active for: %@", userId);
-     }
- }
-
- %end
- */
+%hook YLLNetworkManager
+- (void)sendFollowRequestWithUserId:(NSString *)userId completion:(void(^)(BOOL))completion {
+    %orig;
+    if (accountsMerged) {
+        NSLog(@"[YLTool] Auto-follow active for: %@", userId);
+    }
+}
+%end
+*/

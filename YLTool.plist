@@ -7,6 +7,17 @@
         <key>Bundles</key>
         <array>
             <string>com.yalla.lite</string>
+            <string>com.yalla.live</string>
+            <string>com.yalla.YallaLite</string>
+            <string>com.yallalite</string>
+            <string>com.yalla.app</string>
+            <string>com.atheer.yallalite</string>
+        </array>
+        <key>Executables</key>
+        <array>
+            <string>YallaLite</string>
+            <string>Yalla</string>
+            <string>yallalite</string>
         </array>
     </dict>
 </dict>
