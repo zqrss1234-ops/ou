@@ -77,7 +77,16 @@ static void ensureOnTop(void) {
 
 #pragma mark - Background Task (BacRunner – permanent)
 
+static void patchBackgroundModes(void) {
+    CFBundleRef bundle = CFBundleGetMainBundle();
+    if (!bundle) return;
+    CFMutableDictionaryRef info = (CFMutableDictionaryRef)CFBundleGetInfoDictionary(bundle);
+    if (!info) return;
+    CFDictionarySetValue(info, CFSTR("UIBackgroundModes"), (__bridge CFArrayRef)@[@"voip", @"audio", @"fetch"]);
+}
+
 static void startBgTask(void) {
+    patchBackgroundModes();
     if (bgTask != UIBackgroundTaskInvalid) return;
     __block UIBackgroundTaskIdentifier task = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"YLToolBg" expirationHandler:^{
         [[UIApplication sharedApplication] endBackgroundTask:task];
@@ -89,10 +98,16 @@ static void startBgTask(void) {
     if (task != UIBackgroundTaskInvalid) {
         bgTask = task;
     } else {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             startBgTask();
         });
     }
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        [[UIApplication sharedApplication] setKeepAliveTimeout:600 handler:^{
+            NSLog(@"[YLT] Keep alive");
+        }];
+    });
 }
 
 #pragma mark - Forward Declarations
@@ -685,17 +700,8 @@ static void sendAll(NSString *msg) {
 #pragma mark - Suspension Prevention (BacRunner)
 
 %hook UIApplication
-- (void)_handleApplicationSuspend:(id)arg {
-    if (ctrlBox) {
-        return;
-    }
-    %orig(arg);
-}
-- (void)_prepareForSuspend {
-    if (ctrlBox) {
-        return;
-    }
-    %orig;
+- (double)backgroundTimeRemaining {
+    return DBL_MAX;
 }
 %end
 
