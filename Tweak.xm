@@ -140,9 +140,9 @@ static void udpSend(NSString *m) {
 
     if (!ctrl) {
         if ([target respondsToSelector:@selector(touchesBegan:withEvent:)])
-            [target touchesBegan:nil withEvent:nil];
+            [target touchesBegan:[NSSet set] withEvent:nil];
         if ([target respondsToSelector:@selector(touchesEnded:withEvent:)])
-            [target touchesEnded:nil withEvent:nil];
+            [target touchesEnded:[NSSet set] withEvent:nil];
     }
 
     UIView *fx = [[UIView alloc] initWithFrame:CGRectMake(0,0,12,12)];
