@@ -408,12 +408,12 @@ static void sendAll(NSString *msg) {
     [w addSubview:ctrlBox];
     [w bringSubviewToFront:ctrlBox];
 
-    // ---- Tap Circle (مستحيل faded) ----
+    // ---- Tap Circle (white inside, black border, "impossible") ----
     CGFloat cs = 46, cx = (sw-cs)/2, cy = sh * 0.58;
     tapCircle = [[UIView alloc] initWithFrame:CGRectMake(cx, cy, cs, cs)];
-    tapCircle.backgroundColor = rgba(14, 14, 14, 0.95);
+    tapCircle.backgroundColor = rgba(255, 255, 255, 0.12);
     tapCircle.layer.cornerRadius = cs/2;
-    tapCircle.layer.borderColor = rgba(60, 200, 100, 0.6).CGColor;
+    tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
     tapCircle.layer.borderWidth = 2.5;
     tapCircle.layer.shadowColor = UIColor.blackColor.CGColor;
     tapCircle.layer.shadowOpacity = 0.5;
@@ -423,9 +423,9 @@ static void sendAll(NSString *msg) {
     tapCircle.tag = 300;
 
     UILabel *impossibleLbl = [[UILabel alloc] initWithFrame:tapCircle.bounds];
-    impossibleLbl.text = @"مستحيل";
-    impossibleLbl.textColor = rgba(255, 255, 255, 0.12);
-    impossibleLbl.font = [UIFont boldSystemFontOfSize:8];
+    impossibleLbl.text = @"impossible";
+    impossibleLbl.textColor = rgba(0, 0, 0, 0.25);
+    impossibleLbl.font = [UIFont boldSystemFontOfSize:7];
     impossibleLbl.textAlignment = NSTextAlignmentCenter;
     impossibleLbl.userInteractionEnabled = NO;
     [tapCircle addSubview:impossibleLbl];
@@ -524,14 +524,14 @@ static void sendAll(NSString *msg) {
     isMain = !isMain;
     [self updateMergeUI];
     if (isMain) {
-        tapCircle.layer.borderColor = rgba(60, 200, 100, 0.6).CGColor;
+        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
         tapCircle.layer.borderWidth = 2.5;
         [self alert:@"تم دمج الحسابات ✓" msg:@"جميع النسخ ستتبع هذه النسخة"];
         sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         if (running) sendAll(@"RUN");
     } else {
-        tapCircle.layer.borderColor = rgba(255, 255, 255, 0.1).CGColor;
-        tapCircle.layer.borderWidth = 1.5;
+        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
+        tapCircle.layer.borderWidth = 2.5;
     }
 }
 
@@ -590,14 +590,14 @@ static void sendAll(NSString *msg) {
         isMain = !isMain;
         [self updateMergeUI];
         if (isMain) {
-            tapCircle.layer.borderColor = rgba(60, 200, 100, 0.6).CGColor;
-            tapCircle.layer.borderWidth = 2.5;
-            [self alert:@"✓ رئيسي" msg:@"النسخة الرئيسية - تتحكم بجميع النسخ"];
-            sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
-        } else {
-            tapCircle.layer.borderColor = rgba(255, 255, 255, 0.1).CGColor;
-            tapCircle.layer.borderWidth = 1.5;
-        }
+        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
+        tapCircle.layer.borderWidth = 2.5;
+        [self alert:@"✓ رئيسي" msg:@"النسخة الرئيسية - تتحكم بجميع النسخ"];
+        sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
+    } else {
+        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
+        tapCircle.layer.borderWidth = 2.5;
+    }
     }
 }
 
