@@ -84,6 +84,10 @@ static void stopBgTask(void) {
     bgTask = UIBackgroundTaskInvalid;
 }
 
+#pragma mark - Forward Declarations
+
+@class Tapper, Controller;
+
 #pragma mark - Darwin IPC
 
 static int darwinPosToken = 0;
