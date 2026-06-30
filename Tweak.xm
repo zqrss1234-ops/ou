@@ -324,13 +324,6 @@ static void sendAll(NSString *msg) {
     marqueeLbl.textColor = rgba(240, 245, 255, 0.92);
     marqueeLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
     [marqueeBox addSubview:marqueeLbl];
-
-    CGFloat cw = marqueeBox.frame.size.width;
-    if (singleW > cw) {
-        [UIView animateWithDuration:singleW/80.0 delay:0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionRepeat animations:^{
-            marqueeLbl.transform = CGAffineTransformMakeTranslation(-singleW, 0);
-        } completion:nil];
-    }
     [ctrlBox addSubview:marqueeBox];
     yy += 40;
 
@@ -446,6 +439,19 @@ static void sendAll(NSString *msg) {
 
     [w addSubview:tapCircle];
     [w bringSubviewToFront:tapCircle];
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        CGFloat cw = marqueeBox.frame.size.width;
+        NSString *singleTxt = marqueeStr;
+        CGSize singleSz = [singleTxt sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12 weight:UIFontWeightBold]}];
+        CGFloat singleW = singleSz.width + 24;
+        if (singleW > cw) {
+            marqueeLbl.transform = CGAffineTransformIdentity;
+            [UIView animateWithDuration:singleW/65.0 delay:0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionRepeat animations:^{
+                marqueeLbl.transform = CGAffineTransformMakeTranslation(-singleW, 0);
+            } completion:nil];
+        }
+    });
 
     [self updateMergeUI];
     darwinInit();
