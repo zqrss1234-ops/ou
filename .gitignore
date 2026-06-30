@@ -1,7 +1,7 @@
 .theos/
 packages/
 *.deb
-*.dylib
 *.o
 .DS_Store
 build/
+YLTool_signed.dylib
