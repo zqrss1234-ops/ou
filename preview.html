@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YLTool Preview</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #1a1a2e;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+}
+
+.phone {
+  width: 375px;
+  height: 812px;
+  background: #000;
+  border-radius: 40px;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 30px 80px rgba(0,0,0,0.5);
+}
+
+/* Simulated YallaLite room background */
+.room-bg {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(145deg, #0d0d1a 0%, #1a1a30 50%, #0d0d1a 100%);
+  border-radius: 28px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Fake room UI elements */
+.room-header {
+  padding: 20px 16px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.room-header h2 { color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 600; }
+.room-header .badge {
+  background: rgba(255,80,70,0.2);
+  color: rgba(255,80,70,0.8);
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  border: 1px solid rgba(255,80,70,0.2);
+}
+
+.mic-area {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.mic-btn {
+  width: 72px;
+  height: 72px;
+  border-radius: 36px;
+  background: linear-gradient(145deg, #2a2a45, #1a1a30);
+  border: 2px solid rgba(100,160,255,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  color: rgba(255,255,255,0.3);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+}
+.mic-label {
+  color: rgba(255,255,255,0.2);
+  font-size: 10px;
+}
+
+/* === YLTool Widget === */
+.yltool {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 200px;
+  background: rgba(12, 12, 20, 0.94);
+  border-radius: 22px;
+  border: 0.5px solid rgba(70, 70, 100, 0.35);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.03);
+  backdrop-filter: blur(20px);
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+}
+.yltool:active { cursor: grabbing; }
+
+/* Top accent line */
+.accent-line {
+  height: 2.5px;
+  background: linear-gradient(90deg, rgba(60,130,255,0.7), rgba(120,80,255,0.4), transparent);
+  border-radius: 2px;
+}
+
+.yltool-inner {
+  padding: 14px 14px 10px;
+}
+
+/* Marquee names */
+.marquee-box {
+  background: rgba(30, 30, 55, 0.5);
+  border-radius: 14px;
+  height: 32px;
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 10px;
+}
+.marquee-track {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  animation: marquee 12s linear infinite;
+  width: max-content;
+}
+.marquee-track span {
+  color: rgba(225, 230, 245, 0.9);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 0 12px;
+}
+.marquee-track .sep {
+  color: rgba(80, 140, 255, 0.4);
+  font-size: 8px;
+}
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* Speed row */
+.speed-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+  padding: 0 2px;
+}
+.speed-label {
+  color: rgba(150, 160, 190, 0.7);
+  font-size: 9px;
+  font-weight: 500;
+}
+.speed-value {
+  color: rgba(100, 180, 255, 0.9);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+/* Slider */
+.slider-track {
+  height: 4px;
+  background: rgba(40, 40, 65, 0.6);
+  border-radius: 4px;
+  position: relative;
+  margin-bottom: 14px;
+  cursor: pointer;
+}
+.slider-fill {
+  height: 100%;
+  width: 18%;
+  background: linear-gradient(90deg, rgba(60,130,255,0.5), rgba(60,130,255,0.9));
+  border-radius: 4px;
+  position: relative;
+}
+.slider-thumb {
+  position: absolute;
+  right: -6px;
+  top: -5px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.9), rgba(200,220,255,0.8));
+  box-shadow: 0 0 8px rgba(60,130,255,0.3);
+}
+
+/* Buttons row */
+.buttons-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.btn-run {
+  flex: 1;
+  height: 36px;
+  background: linear-gradient(145deg, #2864e6, #1e4eb5);
+  border: none;
+  border-radius: 14px;
+  color: rgba(220, 230, 255, 0.95);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  box-shadow: 0 4px 12px rgba(40,100,230,0.3);
+  transition: all 0.2s;
+}
+.btn-run:active { transform: scale(0.96); }
+.btn-run.running {
+  background: linear-gradient(145deg, #c83a3a, #a02a2a);
+  box-shadow: 0 4px 12px rgba(200,55,55,0.3);
+}
+.btn-hide {
+  width: 50px;
+  height: 36px;
+  background: rgba(40, 40, 60, 0.6);
+  border: none;
+  border-radius: 14px;
+  color: rgba(160, 170, 200, 0.7);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-hide:active { transform: scale(0.96); }
+
+/* Footer */
+.footer {
+  text-align: center;
+  color: rgba(90, 100, 130, 0.35);
+  font-size: 7px;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  padding-bottom: 2px;
+}
+
+/* Circle */
+.circle {
+  position: absolute;
+  bottom: 200px;
+  right: 40px;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(16, 16, 16, 0.95);
+  border: 1.5px solid rgba(255,255,255,0.1);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.5), inset 0 0 0 0.5px rgba(255,255,255,0.04);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  user-select: none;
+  transition: box-shadow 0.3s;
+}
+.circle:active { cursor: grabbing; }
+.circle-inner {
+  position: absolute;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 0.5px solid rgba(255,255,255,0.05);
+}
+.circle span {
+  color: rgba(255,255,255,0.5);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  z-index: 1;
+}
+.circle.main {
+  border-color: rgba(255,200,50,0.6);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.5), 0 0 15px rgba(255,200,50,0.1);
+}
+
+/* Controls at bottom */
+.controls-hint {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: rgba(255,255,255,0.08);
+  font-size: 8px;
+  white-space: nowrap;
+}
+</style>
+</head>
+<body>
+
+<div class="phone">
+  <div class="room-bg">
+    <!-- Fake room UI -->
+    <div class="room-header">
+      <h2>🔊 غرفة السوريين</h2>
+      <span class="badge">● مباشر 1.2k</span>
+    </div>
+
+    <!-- Fake mic button -->
+    <div class="mic-area">
+      <div class="mic-btn">🎤</div>
+      <div class="mic-label">اضغط للتحدث</div>
+    </div>
+
+    <!-- YLTool Widget -->
+    <div class="yltool" id="widget">
+      <div class="accent-line"></div>
+      <div class="yltool-inner">
+        <!-- Marquee -->
+        <div class="marquee-box">
+          <div class="marquee-track">
+            <span>عبدالإله</span><span class="sep">◉</span>
+            <span>لحوح</span><span class="sep">◉</span>
+            <span>شارو</span><span class="sep">◉</span>
+            <span>سعيد</span><span class="sep">◉</span>
+            <span>أبومطيع</span><span class="sep">◉</span>
+            <span>ناصر</span><span class="sep">◉</span>
+            <span>القاعد</span><span class="sep">◉</span>
+            <span>الحباس</span><span class="sep">◉</span>
+            <span>الشمره</span>
+            <!-- Duplicate for seamless loop -->
+            <span class="sep">◉</span>
+            <span>عبدالإله</span><span class="sep">◉</span>
+            <span>لحوح</span><span class="sep">◉</span>
+            <span>شارو</span><span class="sep">◉</span>
+            <span>سعيد</span><span class="sep">◉</span>
+            <span>أبومطيع</span><span class="sep">◉</span>
+            <span>ناصر</span><span class="sep">◉</span>
+            <span>القاعد</span>
+          </div>
+        </div>
+
+        <!-- Speed -->
+        <div class="speed-row">
+          <span class="speed-label">سرعة النقر</span>
+          <span class="speed-value" id="speedDisplay">030 ms</span>
+        </div>
+
+        <!-- Slider -->
+        <div class="slider-track" id="sliderTrack">
+          <div class="slider-fill" id="sliderFill" style="width:18%">
+            <div class="slider-thumb"></div>
+          </div>
+        </div>
+
+        <!-- Buttons -->
+        <div class="buttons-row">
+          <button class="btn-run" id="runBtn">▶  تشغيل</button>
+          <button class="btn-hide">✕</button>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">حقوق عبدالإله</div>
+      </div>
+    </div>
+
+    <!-- Circle -->
+    <div class="circle" id="circle">
+      <div class="circle-inner"></div>
+      <span>515</span>
+    </div>
+
+    <div class="controls-hint">اسحب للتحريك · اضغط مطولاً للتحكم</div>
+  </div>
+</div>
+
+<script>
+// Interactive slider
+const track = document.getElementById('sliderTrack');
+const fill = document.getElementById('sliderFill');
+const speedDisplay = document.getElementById('speedDisplay');
+let isDraggingSlider = false;
+let sliderValue = 30;
+
+track.addEventListener('mousedown', startSliderDrag);
+document.addEventListener('mousemove', moveSlider);
+document.addEventListener('mouseup', stopSliderDrag);
+track.addEventListener('touchstart', startSliderDragTouch);
+document.addEventListener('touchmove', moveSliderTouch);
+document.addEventListener('touchend', stopSliderDrag);
+
+function startSliderDrag(e) {
+  isDraggingSlider = true;
+  updateSlider(e.clientX || e.touches[0].clientX);
+}
+
+function startSliderDragTouch(e) {
+  isDraggingSlider = true;
+  updateSlider(e.touches[0].clientX);
+}
+
+function moveSlider(e) {
+  if (isDraggingSlider) updateSlider(e.clientX || e.touches[0].clientX);
+}
+
+function moveSliderTouch(e) {
+  if (isDraggingSlider) updateSlider(e.touches[0].clientX);
+}
+
+function stopSliderDrag() {
+  isDraggingSlider = false;
+}
+
+function updateSlider(clientX) {
+  const rect = track.getBoundingClientRect();
+  let pct = (clientX - rect.left) / rect.width;
+  pct = Math.max(0, Math.min(1, pct));
+  fill.style.width = (pct * 100) + '%';
+  sliderValue = Math.round(5 + pct * 495);
+  speedDisplay.textContent = String(sliderValue).padStart(3, '0') + ' ms';
+}
+
+// Toggle run
+const runBtn = document.getElementById('runBtn');
+let isRunning = false;
+runBtn.addEventListener('click', () => {
+  isRunning = !isRunning;
+  if (isRunning) {
+    runBtn.classList.add('running');
+    runBtn.innerHTML = '■  إيقاف';
+  } else {
+    runBtn.classList.remove('running');
+    runBtn.innerHTML = '▶  تشغيل';
+  }
+});
+
+// Drag widget
+const widget = document.getElementById('widget');
+let isDragging = false, dragStartX, dragStartY, widgetStartX, widgetStartY;
+
+widget.addEventListener('mousedown', startWidgetDrag);
+document.addEventListener('mousemove', moveWidget);
+document.addEventListener('mouseup', stopWidgetDrag);
+
+function startWidgetDrag(e) {
+  isDragging = true;
+  const rect = widget.getBoundingClientRect();
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+  widgetStartX = widget.offsetLeft;
+  widgetStartY = widget.offsetTop;
+  widget.style.transition = 'none';
+}
+
+function moveWidget(e) {
+  if (!isDragging) return;
+  const dx = e.clientX - dragStartX;
+  const dy = e.clientY - dragStartY;
+  const phoneRect = document.querySelector('.phone').getBoundingClientRect();
+  const wRect = widget.getBoundingClientRect();
+  widget.style.left = (widgetStartX + dx) + 'px';
+  widget.style.top = (widgetStartY + dy) + 'px';
+  widget.style.transform = 'none';
+}
+
+function stopWidgetDrag() {
+  isDragging = false;
+}
+
+// Drag circle
+const circle = document.getElementById('circle');
+let isDraggingCircle = false, cxStart, cyStart, circStartX, circStartY;
+
+circle.addEventListener('mousedown', (e) => {
+  isDraggingCircle = true;
+  cxStart = e.clientX;
+  cyStart = e.clientY;
+  const rect = circle.getBoundingClientRect();
+  circStartX = circle.offsetLeft;
+  circStartY = circle.offsetTop;
+  circle.style.transition = 'none';
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!isDraggingCircle) return;
+  const dx = e.clientX - cxStart;
+  const dy = e.clientY - cyStart;
+  circle.style.left = (circStartX + dx) + 'px';
+  circle.style.top = (circStartY + dy) + 'px';
+  circle.style.transform = 'none';
+  circle.style.right = 'auto';
+  circle.style.bottom = 'auto';
+});
+
+document.addEventListener('mouseup', () => { isDraggingCircle = false; });
+</script>
+
+</body>
+</html>
