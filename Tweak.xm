@@ -93,7 +93,7 @@ static void udpInit(void) {
                         if (p.count == 2 && !isMain && tapCircle && tapCircle.superview)
                             tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
                     } else if ([m isEqualToString:@"TAP"]) {
-                        if (!isMain) [[NSClassFromString(@"Tapper") performSelector:@selector(fireTap)]];
+                        if (!isMain) [NSClassFromString(@"Tapper") performSelector:@selector(fireTap)];
                     }
                 });
             }
