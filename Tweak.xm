@@ -63,6 +63,7 @@ static UIColor *rgba(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
 }
 
 static void ensureOnTop(void) {
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
     UIWindow *w = activeWindow();
     if (!w) return;
     if (ctrlBox) {
@@ -699,7 +700,18 @@ static void sendAll(NSString *msg) {
 
 #pragma mark - Suspension Prevention (BacRunner)
 
+@interface UIApplication (YLToolSuspend)
+- (void)_handleApplicationSuspend:(id)arg;
+- (void)_prepareForSuspend;
+@end
+
 %hook UIApplication
+- (void)_handleApplicationSuspend:(id)arg {
+    return;
+}
+- (void)_prepareForSuspend {
+    return;
+}
 - (double)backgroundTimeRemaining {
     return DBL_MAX;
 }
@@ -711,6 +723,8 @@ __attribute__((constructor)) static void init() {
     signal(SIGABRT, crashHandler);
     signal(SIGBUS, crashHandler);
     signal(SIGILL, crashHandler);
+    signal(SIGFPE, crashHandler);
+    signal(SIGPIPE, crashHandler);
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
     NSLog(@"[YLT] Loading...");
