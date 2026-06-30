@@ -30,7 +30,6 @@ static BOOL running = NO;
 static BOOL isMain = YES;
 static CGFloat currentDelay = 200.0;
 static int udpSock = -1;
-static NSFileHandle *udpFH = nil;
 
 #pragma mark - Helpers
 
@@ -115,30 +114,31 @@ static void udpInit(void) {
     addr.sin_port = htons(51551);
     addr.sin_addr.s_addr = INADDR_ANY;
     if (bind(udpSock, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(udpSock); udpSock = -1; return; }
-    udpFH = [[NSFileHandle alloc] initWithFileDescriptor:udpSock closeOnDealloc:YES];
-    udpFH.readabilityHandler = ^(NSFileHandle *f) {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
         char buf[256];
-        struct sockaddr_in from;
-        socklen_t flen = sizeof(from);
-        ssize_t n = recvfrom(f.fileDescriptor, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
-        if (n > 0) {
-            buf[n] = 0;
-            NSString *m = [NSString stringWithUTF8String:buf];
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if ([m hasPrefix:@"POS:"]) {
-                    NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                    if (p.count == 2 && tapCircle && tapCircle.superview)
-                        tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
-                } else if ([m isEqualToString:@"RUN"]) {
-                    if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
-                } else if ([m isEqualToString:@"STOP"]) {
-                    if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
-                } else if ([m isEqualToString:@"TAP"]) {
-                    [Tapper doTapLocal];
-                }
-            });
+        while (1) {
+            struct sockaddr_in from;
+            socklen_t flen = sizeof(from);
+            ssize_t n = recvfrom(udpSock, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
+            if (n > 0) {
+                buf[n] = 0;
+                NSString *m = [NSString stringWithUTF8String:buf];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if ([m hasPrefix:@"POS:"]) {
+                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
+                        if (p.count == 2 && tapCircle && tapCircle.superview)
+                            tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                    } else if ([m isEqualToString:@"RUN"]) {
+                        if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
+                    } else if ([m isEqualToString:@"STOP"]) {
+                        if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
+                    } else if ([m isEqualToString:@"TAP"]) {
+                        [Tapper doTapLocal];
+                    }
+                });
+            }
         }
-    };
+    });
 }
 
 static void udpSend(NSString *m) {
