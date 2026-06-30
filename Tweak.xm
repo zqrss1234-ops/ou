@@ -93,7 +93,7 @@ static void udpInit(void) {
                         if (p.count == 2 && !isMain && tapCircle && tapCircle.superview)
                             tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
                     } else if ([m isEqualToString:@"TAP"]) {
-                        if (!isMain) [Tapper fireTap];
+                        if (!isMain) [[NSClassFromString(@"Tapper") performSelector:@selector(fireTap)]];
                     }
                 });
             }
@@ -142,7 +142,6 @@ static void udpSend(NSString *m) {
 
     CGPoint pt = [tapCircle.superview convertPoint:tapCircle.center toView:w];
     UIView *target = [w hitTest:pt withEvent:nil];
-    CGPoint localPt = [target convertPoint:pt fromView:w];
 
     controlPanel.hidden = ph; namesStrip.hidden = nh; tapCircle.hidden = ch;
 
@@ -208,8 +207,6 @@ static void udpSend(NSString *m) {
     UIColor *bg = color(18, 18, 30, 0.92);
     UIColor *border = color(60, 120, 255, 0.5);
     UIColor *accent = color(60, 120, 255, 1);
-    UIColor *gold = color(255, 200, 50, 1);
-    UIColor *redOn = color(255, 69, 58, 1);
     UIColor *greenOff = color(50, 200, 80, 1);
 
     // Control Panel
