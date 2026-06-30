@@ -5,8 +5,10 @@ Theos tweak for YallaLite with account management features.
 ## Features
 
 - **Name Badges** - Display account names as styled badges
-- **Run/Stop Toggle** - تشغيل / إيقاف control
+- **Run/Stop Toggle** - تشغيل / إيقاف control, starts auto-tapping
 - **Speed Control** - MS delay slider (0.00 - 0.05 seconds)
+- **Draggable Circle (515)** - Movable auto-tap circle, displays "515"
+- **Tap Simulation** - Auto-taps at the circle position with visual flash feedback
 - **Merge Accounts** - دمج الحسابات with mutual follow
 - **Collapsible UI** - Hide/show panel with arrow button
 

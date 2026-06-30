@@ -21,6 +21,9 @@ static BOOL isRunning = NO;
 static BOOL isExpanded = YES;
 static BOOL accountsMerged = NO;
 static CGFloat currentDelay = 0.0;
+static UIView *circleView = nil;
+static UILabel *circleLabel = nil;
+static dispatch_source_t tapTimer = NULL;
 
 #pragma mark - Forward Declarations
 
@@ -249,10 +252,116 @@ static CGFloat currentDelay = 0.0;
     [arrowBtn addTarget:self action:@selector(showPanel) forControlEvents:UIControlEventTouchUpInside];
     [minimizedContainer addSubview:arrowBtn];
 
+    // ---- Draggable Circle (515) ----
+    CGFloat circleSize = 60;
+    CGFloat circleX = (screenWidth - circleSize) / 2;
+    CGFloat circleY = cy + ch + 30;
+    circleView = [[UIView alloc] initWithFrame:CGRectMake(circleX, circleY, circleSize, circleSize)];
+    circleView.backgroundColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.1 alpha:0.9];
+    circleView.layer.cornerRadius = circleSize / 2;
+    circleView.layer.borderColor = [UIColor whiteColor].CGColor;
+    circleView.layer.borderWidth = 2;
+    circleView.userInteractionEnabled = YES;
+    circleView.tag = 300;
+
+    circleLabel = [[UILabel alloc] initWithFrame:circleView.bounds];
+    circleLabel.text = @"515";
+    circleLabel.textColor = [UIColor whiteColor];
+    circleLabel.font = [UIFont boldSystemFontOfSize:18];
+    circleLabel.textAlignment = NSTextAlignmentCenter;
+    [circleView addSubview:circleLabel];
+
+    // Pan gesture for dragging
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[YLTUIHelper class] action:@selector(dragCircle:)];
+    [circleView addGestureRecognizer:pan];
+
     // Add to window
     [tweakWindow addSubview:mainContainer];
     [tweakWindow addSubview:minimizedContainer];
+    [tweakWindow addSubview:circleView];
     tweakWindow.hidden = NO;
+}
+
+#pragma mark - Circle Drag
+
++ (void)dragCircle:(UIPanGestureRecognizer *)gesture {
+    UIView *view = gesture.view;
+    CGPoint translation = [gesture translationInView:view.superview];
+    CGPoint center = view.center;
+    center.x += translation.x;
+    center.y += translation.y;
+    view.center = center;
+    [gesture setTranslation:CGPointZero inView:view.superview];
+}
+
+#pragma mark - Tapping Logic
+
++ (void)startTapping {
+    if (tapTimer) return;
+    CGFloat interval = currentDelay;
+    if (interval < 0.005) interval = 0.005;
+    tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, interval * NSEC_PER_SEC, 0);
+    dispatch_source_set_event_handler(tapTimer, ^{
+        [self performTap];
+    });
+    dispatch_resume(tapTimer);
+}
+
++ (void)stopTapping {
+    if (tapTimer) {
+        dispatch_source_cancel(tapTimer);
+        tapTimer = NULL;
+    }
+}
+
++ (void)performTap {
+    if (!circleView || !isRunning) return;
+
+    // Animate tap press
+    [UIView animateWithDuration:0.03 animations:^{
+        circleView.transform = CGAffineTransformMakeScale(0.8, 0.8);
+        circleView.backgroundColor = [UIColor colorWithRed:1.0 green:0.5 blue:0.2 alpha:0.9];
+    } completion:^(BOOL finished) {
+        [UIView animateWithDuration:0.03 animations:^{
+            circleView.transform = CGAffineTransformIdentity;
+            circleView.backgroundColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.1 alpha:0.9];
+        }];
+    }];
+
+    // Get key window
+    UIWindow *keyWindow = [[UIApplication sharedApplication] keyWindow];
+    if (!keyWindow) return;
+
+    // Convert circle center to key window coordinates
+    CGPoint center = CGPointMake(circleView.bounds.size.width / 2, circleView.bounds.size.height / 2);
+    CGPoint tapPoint = [circleView convertPoint:center toView:keyWindow];
+
+    // Find the view at tap point
+    UIView *targetView = [keyWindow hitTest:tapPoint withEvent:nil];
+    if (!targetView) return;
+    if (targetView == circleView || [targetView isDescendantOfView:mainContainer] || [targetView isDescendantOfView:minimizedContainer]) return;
+
+    // Simulate UIControl tap
+    if ([targetView isKindOfClass:[UIControl class]]) {
+        UIControl *control = (UIControl *)targetView;
+        [control sendActionsForControlEvents:UIControlEventTouchUpInside];
+    }
+
+    // Flash effect on tap point
+    UIView *flash = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 20, 20)];
+    flash.center = tapPoint;
+    flash.backgroundColor = [UIColor whiteColor];
+    flash.layer.cornerRadius = 10;
+    flash.alpha = 0.7;
+    flash.userInteractionEnabled = NO;
+    [keyWindow addSubview:flash];
+    [UIView animateWithDuration:0.2 animations:^{
+        flash.alpha = 0;
+        flash.transform = CGAffineTransformMakeScale(2, 2);
+    } completion:^(BOOL finished) {
+        [flash removeFromSuperview];
+    }];
 }
 
 #pragma mark - Toggle Run/Stop
@@ -262,9 +371,11 @@ static CGFloat currentDelay = 0.0;
     if (isRunning) {
         toggleBtn.backgroundColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1.0];
         [toggleBtn setTitle:@"إيقاف" forState:UIControlStateNormal];
+        [self startTapping];
     } else {
         toggleBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.75 blue:0.3 alpha:1.0];
         [toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
+        [self stopTapping];
     }
 }
 
@@ -277,6 +388,10 @@ static CGFloat currentDelay = 0.0;
     speedSlider.value = val;
     currentDelay = val;
     speedValueLabel.text = [NSString stringWithFormat:@"%.2f ثانية", val];
+    if (isRunning) {
+        [self stopTapping];
+        [self startTapping];
+    }
 }
 
 #pragma mark - Merge Accounts
