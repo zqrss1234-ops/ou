@@ -211,11 +211,9 @@ static void udpSend(NSString *m) {
     UIColor *bg = rgba(22, 22, 38, 0.94);
     UIColor *borderC = rgba(80, 140, 255, 0.35);
     UIColor *accent = rgba(80, 140, 255, 1);
-    UIColor *goldAccent = rgba(255, 200, 50, 1);
     UIColor *textLight = rgba(220, 220, 240, 1);
     UIColor *textDim = rgba(150, 160, 190, 1);
     UIColor *btnGreen = rgba(60, 200, 100, 1);
-    UIColor *btnRed = rgba(255, 80, 70, 1);
 
     // ---- Control Box ----
     CGFloat bw = 200, bh = 210, bx = 16, by = 50;
