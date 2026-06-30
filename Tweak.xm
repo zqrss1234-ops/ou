@@ -33,13 +33,10 @@ static UIWindow *appWindow(void) {
         for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
             if ([s isKindOfClass:[UIWindowScene class]] && s.activationState == UISceneActivationStateForegroundActive)
                 { UIWindow *w = [(UIWindowScene *)s windows].firstObject; if (w && !w.hidden) return w; }
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    UIWindow *w = UIApplication.sharedApplication.keyWindow;
-    if (w && !w.hidden) return w;
-#pragma clang diagnostic pop
     for (UIWindow *w in UIApplication.sharedApplication.windows)
         if (!w.hidden && w.rootViewController) return w;
+    for (UIWindow *w in UIApplication.sharedApplication.windows)
+        if (!w.hidden) return w;
     return nil;
 }
 
@@ -57,14 +54,12 @@ static void udpInit(void) {
     setsockopt(udpSock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
     struct timeval tv = { .tv_sec = 0, .tv_usec = 100000 };
     setsockopt(udpSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(51551);
     addr.sin_addr.s_addr = INADDR_ANY;
     if (bind(udpSock, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(udpSock); udpSock = -1; return; }
-
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         char buf[256];
         while (1) {
@@ -143,8 +138,11 @@ static void udpSend(NSString *m) {
     [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
     [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
 
-    if (![target isKindOfClass:[UIControl class]] && [target respondsToSelector:@selector(touchesBegan:withEvent:)]) {
-        if (ctrl) { /* already handled */ }
+    if (!ctrl) {
+        if ([target respondsToSelector:@selector(touchesBegan:withEvent:)])
+            [target touchesBegan:nil withEvent:nil];
+        if ([target respondsToSelector:@selector(touchesEnded:withEvent:)])
+            [target touchesEnded:nil withEvent:nil];
     }
 
     UIView *fx = [[UIView alloc] initWithFrame:CGRectMake(0,0,12,12)];
@@ -184,19 +182,22 @@ static void udpSend(NSString *m) {
 
 + (void)buildUI {
     UIWindow *w = appWindow();
-    if (!w) { dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self buildUI]; }); return; }
+    if (!w) {
+        static int retries = 0;
+        if (retries++ < 20)
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self buildUI]; });
+        return;
+    }
     if (controlPanel) return;
 
     NSLog(@"[YLT] Building UI");
     CGFloat sw = UIScreen.mainScreen.bounds.size.width;
 
-    // Elegant colors
     UIColor *bg = color(18, 18, 30, 0.92);
     UIColor *border = color(60, 120, 255, 0.5);
     UIColor *accent = color(60, 120, 255, 1);
     UIColor *greenOff = color(50, 200, 80, 1);
 
-    // Control Panel
     CGFloat pw = 200, ph = 155, px = 16, py = 50;
     controlPanel = [[UIView alloc] initWithFrame:CGRectMake(px, py, pw, ph)];
     controlPanel.backgroundColor = bg;
@@ -209,7 +210,6 @@ static void udpSend(NSString *m) {
     controlPanel.layer.shadowRadius = 20;
     controlPanel.tag = 100;
 
-    // Gradient overlay
     CAGradientLayer *grad = [CAGradientLayer layer];
     grad.frame = controlPanel.bounds;
     grad.colors = @[(id)color(30, 30, 60, 0.3).CGColor, (id)color(10, 10, 20, 0).CGColor];
@@ -219,7 +219,6 @@ static void udpSend(NSString *m) {
 
     CGFloat y = 10;
 
-    // Run/Stop
     runBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     runBtn.frame = CGRectMake(10, y, pw-20, 38);
     runBtn.backgroundColor = greenOff;
@@ -231,7 +230,6 @@ static void udpSend(NSString *m) {
     [controlPanel addSubview:runBtn];
     y += 44;
 
-    // Delay Slider
     delaySlider = [[UISlider alloc] initWithFrame:CGRectMake(10, y, pw-20, 22)];
     delaySlider.minimumValue = 0;
     delaySlider.maximumValue = 0.05;
@@ -251,14 +249,12 @@ static void udpSend(NSString *m) {
     [controlPanel addSubview:delayLabel];
     y += 20;
 
-    // Status
     UILabel *statusLbl = [[UILabel alloc] initWithFrame:CGRectMake(10, ph-18, pw-44, 12)];
     statusLbl.text = @"⏻  مستعد";
     statusLbl.textColor = color(120, 120, 140, 1);
     statusLbl.font = [UIFont systemFontOfSize:9];
     [controlPanel addSubview:statusLbl];
 
-    // Hide
     UIButton *hideBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     hideBtn.frame = CGRectMake(pw-32, 6, 22, 22);
     hideBtn.backgroundColor = color(40, 40, 60, 1);
@@ -270,8 +266,8 @@ static void udpSend(NSString *m) {
     [controlPanel addSubview:hideBtn];
 
     [w addSubview:controlPanel];
+    [w bringSubviewToFront:controlPanel];
 
-    // Mini Panel (collapsed)
     miniPanel = [[UIView alloc] initWithFrame:CGRectMake(sw-80-10, 60, 80, 80)];
     miniPanel.backgroundColor = bg;
     miniPanel.layer.cornerRadius = 18;
@@ -291,8 +287,8 @@ static void udpSend(NSString *m) {
     [miniPanel addSubview:showBtn];
 
     [w addSubview:miniPanel];
+    [w bringSubviewToFront:miniPanel];
 
-    // Names Strip
     CGFloat nsW = sw-32, nsH = 34, nsX = 16, nsY = py+ph+14;
     namesStrip = [[UIView alloc] initWithFrame:CGRectMake(nsX, nsY, nsW, nsH)];
     namesStrip.backgroundColor = color(18, 18, 30, 0.85);
@@ -326,8 +322,8 @@ static void udpSend(NSString *m) {
     [namesStrip addGestureRecognizer:ng];
 
     [w addSubview:namesStrip];
+    [w bringSubviewToFront:namesStrip];
 
-    // Tap Circle
     CGFloat cs = 50, cx = (sw-cs)/2, cy = nsY+nsH+24;
     tapCircle = [[UIView alloc] initWithFrame:CGRectMake(cx, cy, cs, cs)];
     tapCircle.backgroundColor = color(255, 69, 58, 0.95);
@@ -355,6 +351,7 @@ static void udpSend(NSString *m) {
     [tapCircle addGestureRecognizer:lg];
 
     [w addSubview:tapCircle];
+    [w bringSubviewToFront:tapCircle];
 
     udpInit();
     NSLog(@"[YLT] UI ready");
@@ -424,11 +421,16 @@ static void udpSend(NSString *m) {
 
 #pragma mark - Constructor
 
-%ctor {
+__attribute__((constructor)) static void init() {
     NSLog(@"[YLT] Loading...");
-    dispatch_async(dispatch_get_main_queue(), ^{ [Controller buildUI]; });
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [Controller buildUI];
+    });
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         UIWindow *w = n.object;
         if (w && !w.hidden && w.rootViewController && !controlPanel) [Controller buildUI];
+    }];
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        if (!controlPanel) [Controller buildUI];
     }];
 }
