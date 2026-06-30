@@ -37,12 +37,13 @@ jobs:
         run: |
           DYLIB=".theos/obj/debug/YLTool.dylib"
           if [ -f "$DYLIB" ]; then
-            ldid -S "$DYLIB"
+            ldid -Sentitlements.plist "$DYLIB"
             echo "=== Signed successfully ==="
             ls -la "$DYLIB"
           else
-            echo "=== Trying obj directory ==="
+            echo "=== dylib not found ==="
             find .theos -name "*.dylib" -type f
+            exit 1
           fi
 
       - name: Package .deb
@@ -50,12 +51,31 @@ jobs:
           export THEOS=/opt/theos
           make package
 
-      - name: Upload dylib
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: YLTool-dylib
+          name: YLTool
           path: |
-            .theos/obj/**/*.dylib
+            .theos/obj/debug/YLTool.dylib
             packages/*.deb
 
+      - name: Create/Update Release
+        run: |
+          TAG="v1.0.0"
+          DYLIB=".theos/obj/debug/YLTool.dylib"
+          DEB=$(ls packages/*.deb 2>/dev/null | head -1)
 
+          gh release create "$TAG" \
+            "$DYLIB#YLTool.dylib" \
+            "$DEB#YLTool.deb" \
+            --title "YLTool v1.0.0" \
+            --notes "Auto-built and signed with ldid.\nCompatible with YallaLite (com.yalla.yallalite).\narm64 + arm64e." \
+            --repo "${{ github.repository }}" 2>/dev/null \
+          || \
+          gh release upload "$TAG" \
+            "$DYLIB#YLTool.dylib" \
+            "$DEB#YLTool.deb" \
+            --repo "${{ github.repository }}" \
+            --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

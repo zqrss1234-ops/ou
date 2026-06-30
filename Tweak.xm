@@ -135,14 +135,16 @@ static void udpSend(NSString *m) {
         UIResponder *r = target.nextResponder;
         while (r) { if ([r isKindOfClass:[UIControl class]]) { ctrl = (UIControl *)r; break; } r = r.nextResponder; }
     }
-    [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
-    [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
+    if (ctrl) {
+        [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
+        [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
+    }
 
-    if (!ctrl) {
-        if ([target respondsToSelector:@selector(touchesBegan:withEvent:)])
-            [target touchesBegan:[NSSet set] withEvent:nil];
-        if ([target respondsToSelector:@selector(touchesEnded:withEvent:)])
-            [target touchesEnded:[NSSet set] withEvent:nil];
+    for (UIGestureRecognizer *gr in [target.gestureRecognizers copy]) {
+        if ([gr isKindOfClass:[UITapGestureRecognizer class]] && gr.enabled) {
+            gr.enabled = NO;
+            gr.enabled = YES;
+        }
     }
 
     UIView *fx = [[UIView alloc] initWithFrame:CGRectMake(0,0,12,12)];
