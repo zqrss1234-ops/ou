@@ -18,6 +18,7 @@ static UIView *tapCircle = nil;
 static UISlider *delaySlider = nil;
 static UILabel *delayLabel = nil;
 static UIButton *runBtn = nil;
+static UIButton *linkBtn = nil;
 static dispatch_source_t tapTimer = NULL;
 static dispatch_source_t topTimer = NULL;
 static BOOL running = NO;
@@ -265,7 +266,20 @@ static void udpSend(NSString *m) {
             marqueeLbl.transform = CGAffineTransformMakeTranslation(-singleW, 0);
         } completion:nil];
     }
+
+    linkBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    linkBtn.frame = CGRectMake(bw-24-10, yy+4, 24, 24);
+    linkBtn.backgroundColor = rgba(40, 40, 65, 0.7);
+    linkBtn.layer.cornerRadius = 12;
+    linkBtn.titleLabel.font = [UIFont systemFontOfSize:10];
+    [linkBtn setTitle:@"🔗" forState:UIControlStateNormal];
+    [linkBtn setTitleColor:rgba(160, 170, 200, 0.9) forState:UIControlStateNormal];
+    [linkBtn addTarget:self action:@selector(toggleLink) forControlEvents:UIControlEventTouchUpInside];
+    linkBtn.tag = 500;
+
     [ctrlBox addSubview:marqueeBox];
+    [ctrlBox addSubview:linkBtn];
+    [self updateLinkUI];
     yy += 38;
 
     // ---- Speed Row ----
@@ -403,6 +417,33 @@ static void udpSend(NSString *m) {
     }
 }
 
++ (void)updateLinkUI {
+    if (!linkBtn) return;
+    if (isMain) {
+        linkBtn.backgroundColor = rgba(60, 130, 255, 0.6);
+        [linkBtn setTitle:@"🔗" forState:UIControlStateNormal];
+        [linkBtn setTitleColor:rgba(200, 220, 255, 1) forState:UIControlStateNormal];
+    } else {
+        linkBtn.backgroundColor = rgba(40, 40, 65, 0.7);
+        [linkBtn setTitle:@"🔗" forState:UIControlStateNormal];
+        [linkBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
+    }
+}
+
++ (void)toggleLink {
+    isMain = !isMain;
+    [self updateLinkUI];
+    if (isMain) {
+        tapCircle.layer.borderColor = rgba(255, 200, 50, 0.7).CGColor;
+        tapCircle.layer.borderWidth = 2;
+        udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
+        if (running) udpSend(@"RUN");
+    } else {
+        tapCircle.layer.borderColor = rgba(255, 255, 255, 0.1).CGColor;
+        tapCircle.layer.borderWidth = 1.5;
+    }
+}
+
 + (void)toggleRun {
     running = !running;
     [self updateRunUI];
@@ -452,6 +493,7 @@ static void udpSend(NSString *m) {
 + (void)setMaster:(UILongPressGestureRecognizer *)g {
     if (g.state == UIGestureRecognizerStateBegan) {
         isMain = !isMain;
+        [self updateLinkUI];
         if (isMain) {
             tapCircle.layer.borderColor = rgba(255, 200, 50, 0.7).CGColor;
             tapCircle.layer.borderWidth = 2;
