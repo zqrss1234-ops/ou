@@ -7,9 +7,9 @@
 #pragma mark - Names
 
 static NSArray<NSString *> *accountNames = @[
-    @"+¦+¿+»+º+ä+Ñ+ä+ç", @"+¦+º+¦+ê", @"+ä+¡+ä+ê+¡", @"+¦+¦+è+»",
-    @"+º+¿+ê+à+¬+¦+¿", @"+å+º+¦+¦", @"+¡+º+¬+à",
-    @"+º+ä+â+º+è+»", @"+º+ä+¦+à+º+à+¦+ç", @"+º+ä+ç+¿+º+¦"
+    @"Ø¹Ø¨Ø¯Ø§Ù„Ø¥Ù„Ù‡", @"Ø´Ø§Ø±Ùˆ", @"Ù„Ø­Ù„ÙˆØ­", @"Ø³Ø¹ÙŠØ¯",
+    @"Ø§Ø¨ÙˆÙ…ØªØ¹Ø¨", @"Ù†Ø§ØµØ±", @"Ø­Ø§ØªÙ…",
+    @"Ø§Ù„ÙƒØ§ÙŠØ¯", @"Ø§Ù„Ø´Ù…Ø§Ù…Ø±Ù‡", @"Ø§Ù„Ù‡Ø¨Ø§Ø³"
 ];
 
 #pragma mark - State
@@ -21,6 +21,7 @@ static UISlider *delaySlider = nil;
 static UILabel *delayLabel = nil;
 static UIButton *runBtn = nil;
 static UIButton *mergeBtn = nil;
+static UIView *mergeDot = nil;
 static dispatch_source_t tapTimer = NULL;
 static dispatch_source_t topTimer = NULL;
 static dispatch_source_t rainbowTimer = NULL;
@@ -28,9 +29,7 @@ static dispatch_source_t marqueeTimer = NULL;
 static CAGradientLayer *accentLine = nil;
 static BOOL running = NO;
 static BOOL isMain = YES;
-static CGFloat currentDelay = 30.0;
-static int udpSock = -1;
-static BOOL darwinReady = NO;
+static CGFloat currentDelay = 100.0;
 
 #pragma mark - Helpers
 
@@ -63,7 +62,7 @@ static void ensureOnTop(void) {
     }
 }
 
-#pragma mark - Darwin IPC (same device GÇô no feedback loop)
+#pragma mark - Darwin IPC (same device)
 
 static int darwinPosToken = 0;
 static int darwinRunToken = 0;
@@ -90,11 +89,10 @@ static void darwinInit(void) {
     notify_register_dispatch("com.yltool.tap", &darwinTapToken, dispatch_get_main_queue(), ^(int t) {
         [NSClassFromString(@"Tapper") performSelector:@selector(doTapLocal)];
     });
-    darwinReady = YES;
 }
 
 static void darwinPostPos(CGFloat x, CGFloat y) {
-    if (!darwinReady) return;
+    if (!darwinPosToken) return;
     uint64_t state = ((uint64_t)(uint32_t)(x * 10) << 32) | (uint64_t)(uint32_t)(y * 10);
     notify_set_state(darwinPosToken, state);
     notify_post("com.yltool.pos");
@@ -104,59 +102,62 @@ static void darwinPost(const char *name) {
     notify_post(name);
 }
 
-#pragma mark - UDP IPC (cross device GÇô no feedback loop)
+#pragma mark - UDP IPC (cross device)
 
 static void udpInit(void) {
-    udpSock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (udpSock < 0) return;
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) return;
     int opt = 1;
-    setsockopt(udpSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    setsockopt(udpSock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
     struct timeval tv = { .tv_sec = 0, .tv_usec = 50000 };
-    setsockopt(udpSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(51551);
     addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(udpSock, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(udpSock); udpSock = -1; return; }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(sock); return; }
+    NSFileHandle *fh = [[NSFileHandle alloc] initWithFileDescriptor:sock closeOnDealloc:YES];
+    fh.readabilityHandler = ^(NSFileHandle *f) {
         char buf[256];
-        while (1) {
-            struct sockaddr_in from;
-            socklen_t flen = sizeof(from);
-            ssize_t n = recvfrom(udpSock, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
-            if (n > 0) {
-                buf[n] = 0;
-                NSString *m = [NSString stringWithUTF8String:buf];
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if ([m hasPrefix:@"POS:"]) {
-                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                        if (p.count == 2 && tapCircle && tapCircle.superview)
-                            tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
-                    } else if ([m isEqualToString:@"RUN"]) {
-                        if (!running) { running = YES; [NSClassFromString(@"Tapper") performSelector:@selector(start)];
-                            [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
-                    } else if ([m isEqualToString:@"STOP"]) {
-                        if (running) { running = NO; [NSClassFromString(@"Tapper") performSelector:@selector(stop)];
-                            [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
-                    } else if ([m isEqualToString:@"TAP"]) {
-                        [NSClassFromString(@"Tapper") performSelector:@selector(doTapLocal)];
-                    }
-                });
-            }
+        struct sockaddr_in from;
+        socklen_t flen = sizeof(from);
+        ssize_t n = recvfrom(f.fileDescriptor, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
+        if (n > 0) {
+            buf[n] = 0;
+            NSString *m = [NSString stringWithUTF8String:buf];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if ([m hasPrefix:@"POS:"]) {
+                    NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
+                    if (p.count == 2 && tapCircle && tapCircle.superview)
+                        tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                } else if ([m isEqualToString:@"RUN"]) {
+                    if (!running) { running = YES; [NSClassFromString(@"Tapper") performSelector:@selector(start)];
+                        [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
+                } else if ([m isEqualToString:@"STOP"]) {
+                    if (running) { running = NO; [NSClassFromString(@"Tapper") performSelector:@selector(stop)];
+                        [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
+                } else if ([m isEqualToString:@"TAP"]) {
+                    [NSClassFromString(@"Tapper") performSelector:@selector(doTapLocal)];
+                }
+            });
         }
-    });
+    };
 }
 
 static void udpSend(NSString *m) {
-    if (udpSock < 0) return;
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) return;
+    int opt = 1;
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
     struct sockaddr_in bc;
     memset(&bc, 0, sizeof(bc));
     bc.sin_family = AF_INET;
     bc.sin_port = htons(51551);
     inet_aton("255.255.255.255", &bc.sin_addr);
-    sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&bc, sizeof(bc));
+    sendto(sock, m.UTF8String, m.length, 0, (struct sockaddr *)&bc, sizeof(bc));
+    close(sock);
 }
 
 #pragma mark - Universal Send
@@ -195,7 +196,7 @@ static void sendAll(NSString *msg) {
     } completion:^(BOOL f) {
         [UIView animateWithDuration:0.015 animations:^{
             tapCircle.transform = CGAffineTransformIdentity;
-            tapCircle.backgroundColor = rgba(14, 14, 14, 0.95);
+            tapCircle.backgroundColor = rgba(255, 255, 255, 0.12);
         }];
     }];
 
@@ -272,9 +273,9 @@ static void sendAll(NSString *msg) {
     CGFloat sw = UIScreen.mainScreen.bounds.size.width;
     CGFloat sh = UIScreen.mainScreen.bounds.size.height;
 
-    NSMutableString *marqueeStr = [NSMutableString string];
+    NSString *marqueeTxt = @"";
     for (NSString *n in accountNames) {
-        [marqueeStr appendFormat:@"  Gùë  %@", n];
+        marqueeTxt = [marqueeTxt stringByAppendingFormat:@"  â—‰  %@", n];
     }
 
     // ---- Premium Control Box ----
@@ -308,7 +309,7 @@ static void sendAll(NSString *msg) {
 
     CGFloat yy = 10;
 
-    // ---- Marquee Names (Arabic, slow scroll) ----
+    // ---- Marquee Names (GCD timer, smooth) ----
     UIView *marqueeBox = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 34)];
     marqueeBox.backgroundColor = rgba(12, 12, 24, 0.6);
     marqueeBox.layer.cornerRadius = 17;
@@ -317,26 +318,39 @@ static void sendAll(NSString *msg) {
     marqueeBox.layer.borderWidth = 0.5;
 
     marqueeLbl = [[UILabel alloc] init];
-    NSString *singleTxt = marqueeStr;
-    CGSize singleSz = [singleTxt sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12 weight:UIFontWeightBold]}];
+    CGSize singleSz = [marqueeTxt sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12 weight:UIFontWeightBold]}];
     CGFloat singleW = singleSz.width + 24;
     marqueeLbl.frame = CGRectMake(0, 0, singleW * 2, 34);
-    marqueeLbl.text = [singleTxt stringByAppendingString:singleTxt];
+    marqueeLbl.text = [marqueeTxt stringByAppendingString:marqueeTxt];
     marqueeLbl.textColor = rgba(240, 245, 255, 0.92);
     marqueeLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
     [marqueeBox addSubview:marqueeLbl];
     [ctrlBox addSubview:marqueeBox];
+
+    CGFloat cw = marqueeBox.frame.size.width;
+    if (singleW > cw) {
+        __block CGFloat offset = 0;
+        CGFloat speed = singleW / 25.0;
+        marqueeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(marqueeTimer, DISPATCH_TIME_NOW, (1.0/60.0) * NSEC_PER_SEC, (1.0/60.0) * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(marqueeTimer, ^{
+            offset -= speed / 60.0;
+            if (offset <= -singleW) offset += singleW;
+            marqueeLbl.transform = CGAffineTransformMakeTranslation(offset, 0);
+        });
+        dispatch_resume(marqueeTimer);
+    }
     yy += 40;
 
     // ---- Speed ----
     UILabel *spLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, yy, 90, 14)];
-    spLbl.text = @"+¦+¦+¦+¬ +º+ä+å+é+¦";
+    spLbl.text = @"Ø³Ø±Ø¹Ø© Ø§Ù„Ù†Ù‚Ø±";
     spLbl.textColor = rgba(150, 160, 190, 0.65);
     spLbl.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
     [ctrlBox addSubview:spLbl];
 
     delayLabel = [[UILabel alloc] initWithFrame:CGRectMake(bw-95, yy, 80, 14)];
-    delayLabel.text = @"030 ms";
+    delayLabel.text = @"100 ms";
     delayLabel.textColor = rgba(100, 180, 255, 0.85);
     delayLabel.font = [UIFont fontWithName:@"Menlo-Bold" size:11] ?: [UIFont boldSystemFontOfSize:11];
     delayLabel.textAlignment = NSTextAlignmentRight;
@@ -344,9 +358,9 @@ static void sendAll(NSString *msg) {
     yy += 16;
 
     delaySlider = [[UISlider alloc] initWithFrame:CGRectMake(10, yy, bw-20, 22)];
-    delaySlider.minimumValue = 5;
+    delaySlider.minimumValue = 50;
     delaySlider.maximumValue = 500;
-    delaySlider.value = 30;
+    delaySlider.value = 100;
     delaySlider.continuous = YES;
     delaySlider.minimumTrackTintColor = rgba(60, 130, 255, 0.9);
     delaySlider.maximumTrackTintColor = rgba(35, 35, 55, 0.6);
@@ -361,7 +375,7 @@ static void sendAll(NSString *msg) {
     runBtn.backgroundColor = rgba(40, 100, 230, 1);
     runBtn.layer.cornerRadius = 16;
     runBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [runBtn setTitle:@"Gû¦  +¬+¦+¦+è+ä" forState:UIControlStateNormal];
+    [runBtn setTitle:@"â–¶  ØªØ´ØºÙŠÙ„" forState:UIControlStateNormal];
     [runBtn setTitleColor:rgba(220, 230, 255, 1) forState:UIControlStateNormal];
     [runBtn addTarget:self action:@selector(toggleRun) forControlEvents:UIControlEventTouchUpInside];
     [ctrlBox addSubview:runBtn];
@@ -371,7 +385,7 @@ static void sendAll(NSString *msg) {
     hideBtn.backgroundColor = rgba(35, 35, 55, 0.7);
     hideBtn.layer.cornerRadius = 16;
     hideBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-    [hideBtn setTitle:@"G£ò +Ñ+«+ü+º+í" forState:UIControlStateNormal];
+    [hideBtn setTitle:@"âœ• Ø¥Ø®ÙØ§Ø¡" forState:UIControlStateNormal];
     [hideBtn setTitleColor:rgba(150, 160, 190, 0.9) forState:UIControlStateNormal];
     [hideBtn addTarget:self action:@selector(hideAll) forControlEvents:UIControlEventTouchUpInside];
     [ctrlBox addSubview:hideBtn];
@@ -388,16 +402,21 @@ static void sendAll(NSString *msg) {
     mergeBtn.frame = CGRectMake(0, 0, mergeRow.frame.size.width, 32);
     mergeBtn.backgroundColor = [UIColor clearColor];
     mergeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
-    [mergeBtn setTitle:@"Gùï  +»+à+¼ +º+ä+¡+¦+º+¿+º+¬" forState:UIControlStateNormal];
+    [mergeBtn setTitle:@"â—‹  Ø¯Ù…Ø¬ Ø§Ù„Ø­Ø³Ø§Ø¨Ø§Øª" forState:UIControlStateNormal];
     [mergeBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
     [mergeBtn addTarget:self action:@selector(toggleMerge) forControlEvents:UIControlEventTouchUpInside];
     [mergeRow addSubview:mergeBtn];
     [ctrlBox addSubview:mergeRow];
+
+    mergeDot = [[UIView alloc] initWithFrame:CGRectMake(10, 10, 8, 8)];
+    mergeDot.layer.cornerRadius = 4;
+    mergeDot.userInteractionEnabled = NO;
+    [mergeRow addSubview:mergeDot];
     yy += 38;
 
     // ---- Footer ----
     UILabel *footer = [[UILabel alloc] initWithFrame:CGRectMake(0, yy, bw, bh-yy-2)];
-    footer.text = @"+¡+é+ê+é +¦+¿+»+º+ä+Ñ+ä+ç";
+    footer.text = @"Ø­Ù‚ÙˆÙ‚ Ø¹Ø¨Ø¯Ø§Ù„Ø¥Ù„Ù‡";
     footer.textColor = rgba(80, 90, 120, 0.3);
     footer.font = [UIFont systemFontOfSize:7 weight:UIFontWeightLight];
     footer.textAlignment = NSTextAlignmentCenter;
@@ -441,20 +460,6 @@ static void sendAll(NSString *msg) {
     [w addSubview:tapCircle];
     [w bringSubviewToFront:tapCircle];
 
-    CGFloat cw = marqueeBox.frame.size.width;
-    if (singleW > cw) {
-        __block CGFloat offset = 0;
-        CGFloat speed = singleW / 28.0;
-        marqueeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-        dispatch_source_set_timer(marqueeTimer, DISPATCH_TIME_NOW, (1.0/60.0) * NSEC_PER_SEC, (1.0/60.0) * NSEC_PER_SEC);
-        dispatch_source_set_event_handler(marqueeTimer, ^{
-            offset -= speed / 60.0;
-            if (offset <= -singleW) offset += singleW;
-            marqueeLbl.transform = CGAffineTransformMakeTranslation(offset, 0);
-        });
-        dispatch_resume(marqueeTimer);
-    }
-
     [self updateMergeUI];
     darwinInit();
     udpInit();
@@ -464,6 +469,7 @@ static void sendAll(NSString *msg) {
 
 + (void)startRainbow {
     static CGFloat hue = 0;
+    if (rainbowTimer) return;
     rainbowTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(rainbowTimer, DISPATCH_TIME_NOW, 0.4 * NSEC_PER_SEC, 0);
     dispatch_source_set_event_handler(rainbowTimer, ^{
@@ -476,10 +482,9 @@ static void sendAll(NSString *msg) {
         accentLine.colors = @[(id)c1.CGColor, (id)c2.CGColor, (id)c3.CGColor];
         ctrlBox.layer.shadowColor = c1.CGColor;
         ctrlBox.layer.borderColor = c2.CGColor;
-        if (marqueeLbl) marqueeLbl.textColor = c1;
-        if (mergeBtn && isMain) {
+        if (marqueeLbl) marqueeLbl.textColor = [UIColor colorWithHue:hue saturation:0.6 brightness:1 alpha:0.92];
+        if (mergeBtn && isMain)
             mergeBtn.backgroundColor = [UIColor colorWithHue:hue saturation:0.5 brightness:0.3 alpha:0.3];
-        }
     });
     dispatch_resume(rainbowTimer);
 }
@@ -504,21 +509,23 @@ static void sendAll(NSString *msg) {
     if (!runBtn) return;
     if (running) {
         runBtn.backgroundColor = rgba(200, 60, 60, 1);
-        [runBtn setTitle:@"Gûá  +Ñ+è+é+º+ü" forState:UIControlStateNormal];
+        [runBtn setTitle:@"â–   Ø¥ÙŠÙ‚Ø§Ù" forState:UIControlStateNormal];
     } else {
         runBtn.backgroundColor = rgba(40, 100, 230, 1);
-        [runBtn setTitle:@"Gû¦  +¬+¦+¦+è+ä" forState:UIControlStateNormal];
+        [runBtn setTitle:@"â–¶  ØªØ´ØºÙŠÙ„" forState:UIControlStateNormal];
     }
 }
 
 + (void)updateMergeUI {
     if (!mergeBtn) return;
     if (isMain) {
-        [mergeBtn setTitle:@"GùÅ  +¬+à +»+à+¼ +º+ä+¡+¦+º+¿+º+¬ G£ô" forState:UIControlStateNormal];
+        [mergeBtn setTitle:@"â—  ØªÙ… Ø¯Ù…Ø¬ Ø§Ù„Ø­Ø³Ø§Ø¨Ø§Øª âœ“" forState:UIControlStateNormal];
         [mergeBtn setTitleColor:rgba(100, 255, 150, 1) forState:UIControlStateNormal];
+        mergeDot.backgroundColor = rgba(60, 200, 100, 0.6);
     } else {
-        [mergeBtn setTitle:@"Gùï  +»+à+¼ +º+ä+¡+¦+º+¿+º+¬" forState:UIControlStateNormal];
+        [mergeBtn setTitle:@"â—‹  Ø¯Ù…Ø¬ Ø§Ù„Ø­Ø³Ø§Ø¨Ø§Øª" forState:UIControlStateNormal];
         [mergeBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
+        mergeDot.backgroundColor = rgba(120, 130, 160, 0.3);
     }
 }
 
@@ -526,14 +533,9 @@ static void sendAll(NSString *msg) {
     isMain = !isMain;
     [self updateMergeUI];
     if (isMain) {
-        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
-        tapCircle.layer.borderWidth = 2.5;
-        [self alert:@"+¬+à +»+à+¼ +º+ä+¡+¦+º+¿+º+¬ G£ô" msg:@"+¼+à+è+¦ +º+ä+å+¦+« +¦+¬+¬+¿+¦ +ç+¦+ç +º+ä+å+¦+«+¬"];
+        [self alert:@"ØªÙ… Ø¯Ù…Ø¬ Ø§Ù„Ø­Ø³Ø§Ø¨Ø§Øª âœ“" msg:@"Ø¬Ù…ÙŠØ¹ Ø§Ù„Ù†Ø³Ø® Ø³ØªØªØ¨Ø¹ Ù‡Ø°Ù‡ Ø§Ù„Ù†Ø³Ø®Ø©"];
         sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         if (running) sendAll(@"RUN");
-    } else {
-        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
-        tapCircle.layer.borderWidth = 2.5;
     }
 }
 
@@ -592,14 +594,9 @@ static void sendAll(NSString *msg) {
         isMain = !isMain;
         [self updateMergeUI];
         if (isMain) {
-        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
-        tapCircle.layer.borderWidth = 2.5;
-        [self alert:@"G£ô +¦+ª+è+¦+è" msg:@"+º+ä+å+¦+«+¬ +º+ä+¦+ª+è+¦+è+¬ - +¬+¬+¡+â+à +¿+¼+à+è+¦ +º+ä+å+¦+«"];
-        sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
-    } else {
-        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
-        tapCircle.layer.borderWidth = 2.5;
-    }
+            [self alert:@"âœ“ Ø±Ø¦ÙŠØ³ÙŠ" msg:@"Ø§Ù„Ù†Ø³Ø®Ø© Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠØ© - ØªØªØ­ÙƒÙ… Ø¨Ø¬Ù…ÙŠØ¹ Ø§Ù„Ù†Ø³Ø®"];
+            sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
+        }
     }
 }
 
