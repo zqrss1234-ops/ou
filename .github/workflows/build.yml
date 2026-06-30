@@ -1,0 +1,74 @@
+name: Build YLTool
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Theos
+        run: |
+          sudo mkdir -p /opt/theos
+          sudo chown -R $USER:admin /opt/theos
+          git clone --recursive https://github.com/theos/theos.git /opt/theos
+          echo "THEOS=/opt/theos" >> $GITHUB_ENV
+
+      - name: Install ldid
+        run: |
+          git clone https://github.com/opa334/ldid.git /tmp/ldid
+          cd /tmp/ldid
+          make -j$(sysctl -n hw.logicalcpu)
+          sudo cp ldid /usr/local/bin/ldid
+
+      - name: Install Darwin CC
+        run: |
+          sudo ln -sf /usr/bin/clang /usr/local/bin/arm64-apple-ios-clang 2>/dev/null || true
+          sudo ln -sf /usr/bin/clang++ /usr/local/bin/arm64-apple-ios-clang++ 2>/dev/null || true
+
+      - name: Build Tweak
+        run: |
+          export THEOS=/opt/theos
+          make
+
+      - name: Sign dylib
+        run: |
+          DYLIB=".theos/obj/debug/YLTool.dylib"
+          if [ -f "$DYLIB" ]; then
+            ldid -S "$DYLIB"
+            echo "=== Signed successfully ==="
+            ls -la "$DYLIB"
+          else
+            echo "=== Trying obj directory ==="
+            find .theos -name "*.dylib" -type f
+          fi
+
+      - name: Package .deb
+        run: |
+          export THEOS=/opt/theos
+          make package
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: YLTool-dylib
+          path: |
+            .theos/obj/**/*.dylib
+            packages/*.deb
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: YLTool v1.0.${{ github.run_number }}
+          files: |
+            .theos/obj/**/*.dylib
+            packages/*.deb
+          token: ${{ secrets.GITHUB_TOKEN }}

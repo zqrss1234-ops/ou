@@ -52,19 +52,17 @@ static dispatch_source_t tapTimer = NULL;
 }
 
 - (void)performFollowWithDelay:(CGFloat)delay {
-    // This method triggers follow between all accounts.
-    // Each account follows every other account in the list.
-    // Hook into YallaLite's follow API methods below.
-    for (NSInteger i = 0; i < accountNames.count; i++) {
-        for (NSInteger j = 0; j < accountNames.count; j++) {
-            if (i == j) continue;
-            // Perform follow action with delay
-            [NSThread sleepForTimeInterval:delay];
-            // TODO: Replace with actual YallaLite hook call
-            // e.g., [[YLLFollowManager shared] followUser:accountNames[j]];
-            NSLog(@"[YLTool] Following %@ -> %@", accountNames[i], accountNames[j]);
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        for (NSInteger i = 0; i < accountNames.count; i++) {
+            for (NSInteger j = 0; j < accountNames.count; j++) {
+                if (i == j) continue;
+                [NSThread sleepForTimeInterval:delay];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    NSLog(@"[YLTool] Following %@ -> %@", accountNames[i], accountNames[j]);
+                });
+            }
         }
-    }
+    });
 }
 
 @end
@@ -329,13 +327,22 @@ static dispatch_source_t tapTimer = NULL;
         }];
     }];
 
-    // Get key window
-    UIWindow *keyWindow = [[UIApplication sharedApplication] keyWindow];
+    // Get key window (iOS 13+ compatible)
+    UIWindow *keyWindow = nil;
+    if (@available(iOS 13.0, *)) {
+        NSSet<UIScene *> *scenes = [UIApplication sharedApplication].connectedScenes;
+        for (UIScene *scene in scenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
+                keyWindow = [(UIWindowScene *)scene windows].firstObject;
+                break;
+            }
+        }
+    }
+    if (!keyWindow) keyWindow = [[UIApplication sharedApplication] keyWindow];
     if (!keyWindow) return;
 
     // Convert circle center to key window coordinates
-    CGPoint center = CGPointMake(circleView.bounds.size.width / 2, circleView.bounds.size.height / 2);
-    CGPoint tapPoint = [circleView convertPoint:center toView:keyWindow];
+    CGPoint tapPoint = [circleView convertPoint:circleView.center toView:keyWindow];
 
     // Find the view at tap point
     UIView *targetView = [keyWindow hitTest:tapPoint withEvent:nil];
@@ -433,12 +440,21 @@ static dispatch_source_t tapTimer = NULL;
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
 
-    UIViewController *rootVC = tweakWindow.rootViewController;
-    if (!rootVC) {
-        rootVC = [[UIViewController alloc] init];
-        tweakWindow.rootViewController = rootVC;
-        [tweakWindow makeKeyAndVisible];
+    UIViewController *rootVC = nil;
+    UIWindow *keyWindow = nil;
+    if (@available(iOS 13.0, *)) {
+        NSSet<UIScene *> *scenes = [UIApplication sharedApplication].connectedScenes;
+        for (UIScene *scene in scenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
+                keyWindow = [(UIWindowScene *)scene windows].firstObject;
+                break;
+            }
+        }
     }
+    if (!keyWindow) keyWindow = [[UIApplication sharedApplication] keyWindow];
+    rootVC = keyWindow.rootViewController;
+    if (!rootVC) rootVC = tweakWindow.rootViewController;
+    if (!rootVC) return;
     [rootVC presentViewController:alert animated:YES completion:nil];
 }
 
