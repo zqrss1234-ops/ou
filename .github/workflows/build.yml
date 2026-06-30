@@ -25,61 +25,53 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install libplist dpkg
-          git clone https://github.com/opa334/ldid.git /tmp/ldid
-          cd /tmp/ldid
-          make -j$(sysctl -n hw.logicalcpu)
-          sudo cp ldid /usr/local/bin/ldid
+          brew install dpkg ldid
 
-      - name: Build
-        run: |
-          export THEOS=/opt/theos
-          make
-
-      - name: Package .deb
+      - name: Build & Package
         run: |
           export THEOS=/opt/theos
           make package
 
-      - name: Sign dylib + deb
+      - name: Sign dylib inside .deb
         run: |
-          DYLIB=".theos/obj/debug/YLTool.dylib"
           DEB=$(ls packages/*.deb 2>/dev/null | head -1)
-
-          # Sign the raw dylib
-          if [ -f "$DYLIB" ]; then
-            ldid -Sentitlements.plist "$DYLIB"
-            echo "=== Raw dylib signed ==="
+          if [ -z "$DEB" ] || [ ! -f "$DEB" ]; then
+            echo "=== ERROR: no .deb found ==="
+            exit 1
           fi
-
-          # Sign the dylib inside the .deb
-          if [ -n "$DEB" ] && [ -f "$DEB" ]; then
-            mkdir -p /tmp/deb_extract
-            dpkg-deb -R "$DEB" /tmp/deb_extract
-            INNER_DYLIB=$(find /tmp/deb_extract -name "YLTool.dylib" -type f)
-            if [ -n "$INNER_DYLIB" ]; then
-              cp "$DYLIB" "$INNER_DYLIB"
-              ldid -Sentitlements.plist "$INNER_DYLIB"
-              dpkg-deb -b /tmp/deb_extract "$DEB"
-              echo "=== .deb resign complete ==="
-            fi
-            rm -rf /tmp/deb_extract
+          mkdir -p /tmp/deb_extract
+          dpkg-deb -R "$DEB" /tmp/deb_extract
+          INNER_DYLIB=$(find /tmp/deb_extract -name "YLTool.dylib" -type f)
+          if [ -z "$INNER_DYLIB" ]; then
+            echo "=== ERROR: dylib not found inside .deb ==="
+            exit 1
           fi
+          ldid -Sentitlements.plist "$INNER_DYLIB"
+          dpkg-deb -b /tmp/deb_extract "$DEB"
+          echo "=== .deb signed successfully ==="
+          rm -rf /tmp/deb_extract
+
+      - name: Extract signed dylib for artifact
+        run: |
+          DEB=$(ls packages/*.deb 2>/dev/null | head -1)
+          mkdir -p /tmp/signed_extract .theos/obj
+          dpkg-deb -R "$DEB" /tmp/signed_extract
+          cp "$(find /tmp/signed_extract -name "YLTool.dylib" -type f)" .theos/obj/YLTool.dylib
+          rm -rf /tmp/signed_extract
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: YLTool
           path: |
-            .theos/obj/debug/YLTool.dylib
+            .theos/obj/YLTool.dylib
             packages/*.deb
 
       - name: Create/Update Release
         run: |
           TAG="v1.0.0"
-          DYLIB=".theos/obj/debug/YLTool.dylib"
+          DYLIB=".theos/obj/YLTool.dylib"
           DEB=$(ls packages/*.deb 2>/dev/null | head -1)
-
           gh release create "$TAG" \
             "$DYLIB#YLTool.dylib" \
             "$DEB#YLTool.deb" \
