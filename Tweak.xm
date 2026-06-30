@@ -47,19 +47,6 @@ static UIColor *color(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
     return [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:a];
 }
 
-static UIView *makeBlur(CGFloat r) {
-    UIView *v = [[UIView alloc] init];
-    v.backgroundColor = [UIColor clearColor];
-    UIBlurEffect *be = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
-    UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:be];
-    blur.frame = v.bounds;
-    blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    blur.layer.cornerRadius = r;
-    blur.clipsToBounds = YES;
-    [v addSubview:blur];
-    return v;
-}
-
 #pragma mark - UDP
 
 static void udpInit(void) {
