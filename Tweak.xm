@@ -38,10 +38,6 @@ static UIWindow *activeWindow(void) {
     return nil;
 }
 
-static UIColor *rgb(CGFloat r, CGFloat g, CGFloat b) {
-    return [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:1];
-}
-
 static UIColor *rgba(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
     return [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:a];
 }
@@ -440,11 +436,6 @@ static void udpSend(NSString *m) {
             [w bringSubviewToFront:ctrlBox];
         }
     });
-}
-
-+ (void)showAll {
-    ctrlBox.hidden = NO;
-    [activeWindow() bringSubviewToFront:ctrlBox];
 }
 
 + (void)dragItem:(UIPanGestureRecognizer *)g {
