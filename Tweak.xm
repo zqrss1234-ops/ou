@@ -3,7 +3,6 @@
 #import <netinet/in.h>
 #import <arpa/inet.h>
 #import <notify.h>
-#import <time.h>
 
 #pragma mark - Names
 
@@ -31,7 +30,6 @@ static CAGradientLayer *accentLine = nil;
 static BOOL running = NO;
 static BOOL isMain = YES;
 static CGFloat currentDelay = 200.0;
-static BOOL slavingSelf = NO;
 
 #pragma mark - Helpers
 
@@ -70,7 +68,6 @@ static int darwinPosToken = 0;
 static int darwinRunToken = 0;
 static int darwinStopToken = 0;
 static int darwinTapToken = 0;
-static int darwinSlaveToken = 0;
 
 static void darwinInit(void) {
     notify_register_dispatch("com.yltool.pos", &darwinPosToken, dispatch_get_main_queue(), ^(int t) {
@@ -89,10 +86,6 @@ static void darwinInit(void) {
     });
     notify_register_dispatch("com.yltool.tap", &darwinTapToken, dispatch_get_main_queue(), ^(int t) {
         [Tapper doTapLocal];
-    });
-    notify_register_dispatch("com.yltool.slave", &darwinSlaveToken, dispatch_get_main_queue(), ^(int t) {
-        if (slavingSelf) { slavingSelf = NO; return; }
-        isMain = NO; [Tapper stop]; [Controller updateMergeUI];
     });
 }
 
@@ -143,13 +136,8 @@ static void udpInit(void) {
                         if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
                     } else if ([m isEqualToString:@"TAP"]) {
                         [Tapper doTapLocal];
-                    } else if ([m isEqualToString:@"SLAVE"]) {
-                        isMain = NO; [Tapper stop]; [Controller updateMergeUI];
                     }
                 });
-            } else {
-                struct timespec ts = { .tv_sec = 0, .tv_nsec = 10 * 1000000 };
-                nanosleep(&ts, NULL);
             }
         }
     });
@@ -176,7 +164,6 @@ static void sendAll(NSString *msg) {
         if ([msg isEqualToString:@"RUN"]) n = "com.yltool.run";
         else if ([msg isEqualToString:@"STOP"]) n = "com.yltool.stop";
         else if ([msg isEqualToString:@"TAP"]) n = "com.yltool.tap";
-        else if ([msg isEqualToString:@"SLAVE"]) n = "com.yltool.slave";
         if (n) darwinPost(n);
     }
     udpSend(msg);
@@ -238,11 +225,10 @@ static void sendAll(NSString *msg) {
 
 + (void)doTap {
     [self doTapLocal];
-    if (isMain) sendAll(@"TAP");
+    sendAll(@"TAP");
 }
 
 + (void)start {
-    if (!isMain) return;
     if (tapTimer) return;
     CGFloat ms = currentDelay;
     if (ms < 50) ms = 50;
@@ -551,16 +537,10 @@ static void sendAll(NSString *msg) {
     isMain = !isMain;
     [self updateMergeUI];
     if (isMain) {
-        [Tapper stop];
-        slavingSelf = YES;
-        sendAll(@"SLAVE");
-        if (running) [Tapper start];
         [self alert:@"تم دمج الحسابات ✓" msg:@"جميع النسخ ستتبع هذه النسخة"];
         if (tapCircle)
             sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         if (running) sendAll(@"RUN");
-    } else {
-        [Tapper stop];
     }
 }
 
@@ -569,10 +549,10 @@ static void sendAll(NSString *msg) {
     [self updateRunUI];
     if (running) {
         [Tapper start];
-        if (isMain) sendAll(@"RUN");
+        sendAll(@"RUN");
     } else {
         [Tapper stop];
-        if (isMain) sendAll(@"STOP");
+        sendAll(@"STOP");
     }
 }
 
@@ -606,7 +586,6 @@ static void sendAll(NSString *msg) {
     CGPoint t = [g translationInView:v.superview];
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [g setTranslation:CGPointZero inView:v.superview];
-    if (!isMain) return;
     static CFTimeInterval lastPos = 0;
     CFTimeInterval now = CACurrentMediaTime();
     if (g.state == UIGestureRecognizerStateEnded || now - lastPos > 0.03) {
@@ -620,10 +599,6 @@ static void sendAll(NSString *msg) {
         isMain = !isMain;
         [self updateMergeUI];
         if (isMain) {
-            [Tapper stop];
-            slavingSelf = YES;
-            sendAll(@"SLAVE");
-            if (running) [Tapper start];
             [self alert:@"✓ رئيسي" msg:@"النسخة الرئيسية - تتحكم بجميع النسخ"];
             if (tapCircle)
                 sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
