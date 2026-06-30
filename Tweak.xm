@@ -64,40 +64,109 @@ static void udpSend(NSString *msg);
 
 @implementation YLTapSync
 
++ (void)simulateRealPressOnView:(UIView *)view atPoint:(CGPoint)point {
+    Class touchClass = NSClassFromString(@"UITouch");
+    if (!touchClass) return;
+
+    id touch = [[touchClass alloc] init];
+    NSDate *now = [NSDate date];
+    [touch setValue:@(UITouchPhaseBegan) forKey:@"_phase"];
+    [touch setValue:[NSValue valueWithCGPoint:point] forKey:@"_locationInWindow"];
+    [touch setValue:[NSValue valueWithCGPoint:point] forKey:@"_previousLocationInWindow"];
+    [touch setValue:now forKey:@"_timestamp"];
+    [touch setValue:@(0) forKey:@"_tapCount"];
+    [touch setValue:view.window forKey:@"_window"];
+    [touch setValue:@(UITouchTypeDirect) forKey:@"_type"];
+    [touch setValue:@(0) forKey:@"_radius"];
+    [touch setValue:view forKey:@"_view"];
+    [touch setValue:@(0) forKey:@"_gestureView"];
+    [touch setValue:@(0) forKey:@"_phase"];
+    [touch setValue:@(1) forKey:@"_touchFlags"];
+    [touch setValue:@(1) forKey:@"_edgeFlags"];
+
+    NSSet *touchSet = [[NSSet alloc] initWithObjects:&touch count:1];
+
+    // Phase 1: Began
+    [touch setValue:@(UITouchPhaseBegan) forKey:@"_phase"];
+    UIEvent *event = [self eventWithTouch:touch];
+    [view touchesBegan:touchSet withEvent:event];
+
+    // Phase 2: Ended (after short delay)
+    [touch setValue:@(UITouchPhaseEnded) forKey:@"_phase"];
+    [touch setValue:now forKey:@"_timestamp"];
+    event = [self eventWithTouch:touch];
+    [view touchesEnded:touchSet withEvent:event];
+}
+
++ (UIEvent *)eventWithTouch:(id)touch {
+    Class eventClass = NSClassFromString(@"UIEvent");
+    id event = [[eventClass alloc] init];
+    [event setValue:@(UIEventTypeTouches) forKey:@"_type"];
+    [event setValue:@(UIEventSubtypeNone) forKey:@"_subtype"];
+    [event setValue:[NSDate date] forKey:@"_timestamp"];
+    [event setValue:touch forKey:@"_touch"];
+    return event;
+}
+
++ (UIView *)viewUnderCircle {
+    if (!circleView || !circleView.superview) return nil;
+
+    // Temporarily hide our overlay to find real views below
+    BOOL panelHidden = panel.hidden;
+    BOOL namesHidden = namesBar.hidden;
+    BOOL circleHidden = circleView.hidden;
+    panel.hidden = YES;
+    namesBar.hidden = YES;
+    circleView.hidden = YES;
+
+    UIWindow *w = activeWindow();
+    UIView *target = nil;
+    CGPoint pt = CGPointZero;
+    if (w) {
+        pt = [circleView convertPoint:CGPointMake(CGRectGetMidX(circleView.bounds), CGRectGetMidY(circleView.bounds)) toView:w];
+        target = [w hitTest:pt withEvent:nil];
+    }
+
+    // Restore visibility
+    panel.hidden = panelHidden;
+    namesBar.hidden = namesHidden;
+    circleView.hidden = circleHidden;
+
+    return target;
+}
+
 + (void)performLocalTap {
     if (!circleView || !isRunning) return;
 
-    [UIView animateWithDuration:0.03 animations:^{
-        circleView.transform = CGAffineTransformMakeScale(0.8, 0.8);
+    [UIView animateWithDuration:0.02 animations:^{
+        circleView.transform = CGAffineTransformMakeScale(0.85, 0.85);
         circleView.backgroundColor = [UIColor colorWithRed:1.0 green:0.5 blue:0.2 alpha:0.95];
     } completion:^(BOOL finished) {
-        [UIView animateWithDuration:0.03 animations:^{
+        [UIView animateWithDuration:0.02 animations:^{
             circleView.transform = CGAffineTransformIdentity;
             circleView.backgroundColor = [UIColor colorWithRed:0.95 green:0.25 blue:0.1 alpha:0.95];
         }];
     }];
 
-    UIWindow *w = activeWindow();
-    if (!w) return;
-
-    CGPoint pt = [circleView convertPoint:CGPointMake(30, 30) toView:w];
-    UIView *target = [w hitTest:pt withEvent:nil];
+    UIView *target = [self viewUnderCircle];
     if (!target) return;
-    if (target == circleView || [target isDescendantOfView:panel] || [target isDescendantOfView:namesBar]) return;
 
-    if ([target isKindOfClass:[UIControl class]]) {
-        [(UIControl *)target sendActionsForControlEvents:UIControlEventTouchUpInside];
-    }
+    UIWindow *w = activeWindow();
+    CGPoint pt = [circleView convertPoint:CGPointMake(CGRectGetMidX(circleView.bounds), CGRectGetMidY(circleView.bounds)) toView:w];
+    CGPoint localPt = [w convertPoint:pt toView:target];
 
-    UIView *flash = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 16, 16)];
+    // Real press simulation (works on any view, inside rooms, on any button)
+    [self simulateRealPressOnView:target atPoint:localPt];
+
+    // Flash feedback
+    UIView *flash = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 14, 14)];
     flash.center = pt;
-    flash.backgroundColor = [UIColor whiteColor];
-    flash.layer.cornerRadius = 8;
-    flash.alpha = 0.8;
+    flash.backgroundColor = [UIColor colorWithRed:0.3 green:0.8 blue:1.0 alpha:0.9];
+    flash.layer.cornerRadius = 7;
     flash.userInteractionEnabled = NO;
     [w addSubview:flash];
-    [UIView animateWithDuration:0.25 animations:^{
-        flash.alpha = 0; flash.transform = CGAffineTransformMakeScale(2.5, 2.5);
+    [UIView animateWithDuration:0.3 animations:^{
+        flash.alpha = 0; flash.transform = CGAffineTransformMakeScale(3, 3);
     } completion:^(BOOL f) { [flash removeFromSuperview]; }];
 
     udpSend(@"TAP");
