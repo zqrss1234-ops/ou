@@ -1,0 +1,9 @@
+Package: com.yourcompany.yltool
+Name: YLTool
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: أداة متكاملة لـ YallaLite - دمج حسابات وتحكم بالسرعة
+Maintainer: YourName
+Author: YourName
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 13.0)
