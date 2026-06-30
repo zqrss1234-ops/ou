@@ -6,12 +6,6 @@
 #import <arpa/inet.h>
 #import <notify.h>
 
-#pragma mark - Crash Prevention (no crashes)
-
-static void exceptionHandler(NSException *e) {
-    NSLog(@"[YLT] Uncaught exception: %@ %@", e.name, e.reason);
-}
-
 #pragma mark - Names
 
 static NSArray<NSString *> *accountNames = @[
@@ -112,41 +106,19 @@ static void startBgTask(void) {
 static int darwinPosToken = 0;
 static int darwinRunToken = 0;
 static int darwinStopToken = 0;
-static int darwinTapToken = 0;
 
 static void darwinInit(void) {
     notify_register_dispatch("com.yltool.pos", &darwinPosToken, dispatch_get_main_queue(), ^(int t) {
-        @try {
-            uint64_t state;
-            notify_get_state(t, &state);
-            CGFloat x = (CGFloat)(state >> 32) / 10.0;
-            CGFloat y = (CGFloat)(state & 0xFFFFFFFF) / 10.0;
-            if (tapCircle && tapCircle.superview)
-                tapCircle.center = CGPointMake(x, y);
-        } @catch (NSException *e) {
-            NSLog(@"[YLT] Darwin pos error: %@ %@", e.name, e.reason);
-        }
+        if (!tapCircle || !tapCircle.superview) return;
+        uint64_t state;
+        notify_get_state(t, &state);
+        tapCircle.center = CGPointMake((CGFloat)(state >> 32) / 10.0, (CGFloat)(state & 0xFFFFFFFF) / 10.0);
     });
     notify_register_dispatch("com.yltool.run", &darwinRunToken, dispatch_get_main_queue(), ^(int t) {
-        @try {
-            if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
-        } @catch (NSException *e) {
-            NSLog(@"[YLT] Darwin run error: %@ %@", e.name, e.reason);
-        }
+        if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
     });
     notify_register_dispatch("com.yltool.stop", &darwinStopToken, dispatch_get_main_queue(), ^(int t) {
-        @try {
-            if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
-        } @catch (NSException *e) {
-            NSLog(@"[YLT] Darwin stop error: %@ %@", e.name, e.reason);
-        }
-    });
-    notify_register_dispatch("com.yltool.tap", &darwinTapToken, dispatch_get_main_queue(), ^(int t) {
-        @try {
-            [Tapper doTapLocal];
-        } @catch (NSException *e) {
-            NSLog(@"[YLT] Darwin tap error: %@ %@", e.name, e.reason);
-        }
+        if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
     });
 }
 
@@ -230,12 +202,10 @@ static void sendAll(NSString *msg) {
     if ([msg hasPrefix:@"POS:"]) {
         NSArray *p = [[msg substringFromIndex:4] componentsSeparatedByString:@","];
         if (p.count == 2) darwinPostPos([p[0] floatValue], [p[1] floatValue]);
-    } else {
-        const char *n = NULL;
-        if ([msg isEqualToString:@"RUN"]) n = "com.yltool.run";
-        else if ([msg isEqualToString:@"STOP"]) n = "com.yltool.stop";
-        else if ([msg isEqualToString:@"TAP"]) n = "com.yltool.tap";
-        if (n) darwinPost(n);
+    } else if ([msg isEqualToString:@"RUN"]) {
+        darwinPost("com.yltool.run");
+    } else if ([msg isEqualToString:@"STOP"]) {
+        darwinPost("com.yltool.stop");
     }
     udpSend(msg);
 }
@@ -276,12 +246,8 @@ static void sendAll(NSString *msg) {
     while (hit && ![hit isKindOfClass:[UIControl class]]) hit = hit.superview;
     UIControl *ctrl = (UIControl *)hit;
     if (ctrl && [UIApplication sharedApplication].applicationState == UIApplicationStateActive) {
-        @try {
-            [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
-            [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
-        } @catch (NSException *e) {
-            NSLog(@"[YLT] sendActions error: %@", e.reason);
-        }
+        [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
+        [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
     }
 
     UIView *fx = [[UIView alloc] initWithFrame:CGRectMake(0,0,16,16)];
@@ -683,7 +649,6 @@ static void sendAll(NSString *msg) {
 #pragma mark - Constructor
 
 __attribute__((constructor)) static void init() {
-    NSSetUncaughtExceptionHandler(&exceptionHandler);
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
     NSLog(@"[YLT] Loading...");
