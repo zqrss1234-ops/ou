@@ -79,13 +79,20 @@ static void ensureOnTop(void) {
 
 static void startBgTask(void) {
     if (bgTask != UIBackgroundTaskInvalid) return;
-    bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"YLToolBg" expirationHandler:^{
-        [[UIApplication sharedApplication] endBackgroundTask:bgTask];
-        bgTask = UIBackgroundTaskInvalid;
+    __block UIBackgroundTaskIdentifier task = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"YLToolBg" expirationHandler:^{
+        [[UIApplication sharedApplication] endBackgroundTask:task];
         dispatch_async(dispatch_get_main_queue(), ^{
+            if (bgTask == task) bgTask = UIBackgroundTaskInvalid;
             startBgTask();
         });
     }];
+    if (task != UIBackgroundTaskInvalid) {
+        bgTask = task;
+    } else {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            startBgTask();
+        });
+    }
 }
 
 #pragma mark - Forward Declarations
@@ -679,11 +686,16 @@ static void sendAll(NSString *msg) {
 
 %hook UIApplication
 - (void)_handleApplicationSuspend:(id)arg {
-    if (running) {
-        NSLog(@"[YLT] Blocking suspend while running");
+    if (ctrlBox) {
         return;
     }
     %orig(arg);
+}
+- (void)_prepareForSuspend {
+    if (ctrlBox) {
+        return;
+    }
+    %orig;
 }
 %end
 
