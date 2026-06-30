@@ -23,9 +23,9 @@ jobs:
           git clone --recursive https://github.com/theos/theos.git /opt/theos
           echo "THEOS=/opt/theos" >> $GITHUB_ENV
 
-      - name: Install ldid
+      - name: Install dependencies
         run: |
-          brew install libplist
+          brew install libplist dpkg
           git clone https://github.com/opa334/ldid.git /tmp/ldid
           cd /tmp/ldid
           make -j$(sysctl -n hw.logicalcpu)

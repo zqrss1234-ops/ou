@@ -67,11 +67,13 @@ static void ensureOnTop(void) {
 
 static void startBgTask(void) {
     if (bgTask != UIBackgroundTaskInvalid) return;
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateBackground) return;
     bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"YLTool" expirationHandler:^{
         [[UIApplication sharedApplication] endBackgroundTask:bgTask];
         bgTask = UIBackgroundTaskInvalid;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            startBgTask();
+            if ([UIApplication sharedApplication].applicationState == UIApplicationStateBackground)
+                startBgTask();
         });
     }];
 }
