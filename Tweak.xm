@@ -3,36 +3,11 @@
 #import <netinet/in.h>
 #import <arpa/inet.h>
 #import <notify.h>
-#import <signal.h>
-#import <sys/ucontext.h>
 
-#pragma mark - Crash Prevention (BacRunner – no crashes at all)
-
-static void crashHandler(int sig, siginfo_t *info, void *context) {
-    ucontext_t *uc = (ucontext_t *)context;
-#if __arm64__
-    uint32_t *pc = (uint32_t *)uc->uc_mcontext->__ss.__pc;
-    if (*pc != 0 && *pc != 0xDEADBEEF)
-        uc->uc_mcontext->__ss.__pc += 4;
-#endif
-}
+#pragma mark - Crash Prevention (no crashes)
 
 static void exceptionHandler(NSException *e) {
     NSLog(@"[YLT] Uncaught exception: %@ %@", e.name, e.reason);
-}
-
-static void setupCrashPrevention(void) {
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_sigaction = crashHandler;
-    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
-    sigaction(SIGSEGV, &sa, NULL);
-    sigaction(SIGABRT, &sa, NULL);
-    sigaction(SIGBUS, &sa, NULL);
-    sigaction(SIGILL, &sa, NULL);
-    sigaction(SIGFPE, &sa, NULL);
-    sigaction(SIGPIPE, &sa, NULL);
-    NSSetUncaughtExceptionHandler(&exceptionHandler);
 }
 
 #pragma mark - Names
@@ -186,7 +161,9 @@ static void udpInit(void) {
     if (udpSock < 0) return;
     int opt = 1;
     setsockopt(udpSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#ifdef SO_REUSEPORT
     setsockopt(udpSock, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+#endif
     setsockopt(udpSock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -698,7 +675,7 @@ static void sendAll(NSString *msg) {
 #pragma mark - Constructor
 
 __attribute__((constructor)) static void init() {
-    setupCrashPrevention();
+    NSSetUncaughtExceptionHandler(&exceptionHandler);
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
     NSLog(@"[YLT] Loading...");
