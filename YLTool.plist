@@ -6,18 +6,27 @@
     <dict>
         <key>Bundles</key>
         <array>
+            <string>com.yalla.yallalite</string>
             <string>com.yalla.lite</string>
-            <string>com.yalla.live</string>
             <string>com.yalla.YallaLite</string>
             <string>com.yallalite</string>
+            <string>com.yalla.live</string>
             <string>com.yalla.app</string>
+            <string>com.yalla.Yalla</string>
             <string>com.atheer.yallalite</string>
+            <string>com.yalla.yallalite.adhoc</string>
+            <string>com.yalla.yallalite.enterprise</string>
+            <string>com.yalla.vlite</string>
+            <string>com.yalla.YLLite</string>
         </array>
         <key>Executables</key>
         <array>
             <string>YallaLite</string>
             <string>Yalla</string>
             <string>yallalite</string>
+            <string>YLLite</string>
+            <string>ylite</string>
+            <string>YALite</string>
         </array>
     </dict>
 </dict>
