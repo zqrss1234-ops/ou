@@ -15,10 +15,11 @@ static NSArray<NSString *> *accountNames = @[
 
 static UIView *ctrlBox = nil;
 static UIView *tapCircle = nil;
+static UILabel *marqueeLbl = nil;
 static UISlider *delaySlider = nil;
 static UILabel *delayLabel = nil;
 static UIButton *runBtn = nil;
-static UIButton *linkBtn = nil;
+static UIButton *mergeBtn = nil;
 static dispatch_source_t tapTimer = NULL;
 static dispatch_source_t topTimer = NULL;
 static dispatch_source_t rainbowTimer = NULL;
@@ -87,16 +88,16 @@ static void udpInit(void) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     if ([m hasPrefix:@"POS:"]) {
                         NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                        if (p.count == 2 && !isMain && tapCircle && tapCircle.superview)
+                        if (p.count == 2 && tapCircle && tapCircle.superview)
                             tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
                     } else if ([m isEqualToString:@"RUN"]) {
-                        if (!isMain) { running = YES; [NSClassFromString(@"Tapper") performSelector:@selector(start)];
+                        if (!running) { running = YES; [NSClassFromString(@"Tapper") performSelector:@selector(start)];
                             [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
                     } else if ([m isEqualToString:@"STOP"]) {
-                        if (!isMain) { running = NO; [NSClassFromString(@"Tapper") performSelector:@selector(stop)];
+                        if (running) { running = NO; [NSClassFromString(@"Tapper") performSelector:@selector(stop)];
                             [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
                     } else if ([m isEqualToString:@"TAP"]) {
-                        if (!isMain) [NSClassFromString(@"Tapper") performSelector:@selector(doTap)];
+                        [NSClassFromString(@"Tapper") performSelector:@selector(doTap)];
                     }
                 });
             }
@@ -133,7 +134,7 @@ static void udpSend(NSString *m) {
     } completion:^(BOOL f) {
         [UIView animateWithDuration:0.015 animations:^{
             tapCircle.transform = CGAffineTransformIdentity;
-            tapCircle.backgroundColor = rgba(20, 20, 20, 0.95);
+            tapCircle.backgroundColor = rgba(16, 16, 16, 0.95);
         }];
     }];
 
@@ -207,31 +208,31 @@ static void udpSend(NSString *m) {
     CGFloat sw = UIScreen.mainScreen.bounds.size.width;
     CGFloat sh = UIScreen.mainScreen.bounds.size.height;
 
-    // ---- Auto-scroll names text ----
+    // Marquee text
     NSMutableString *marqueeStr = [NSMutableString string];
     for (NSString *n in accountNames) {
         [marqueeStr appendFormat:@"  ◉  %@", n];
     }
 
-    // ---- Control Box (Square Rectangle) ----
-    CGFloat bw = 220, bh = 185, bx = (sw-bw)/2, by = sh * 0.15;
+    // ---- Premium Control Box ----
+    CGFloat bw = 230, bh = 210, bx = (sw-bw)/2, by = sh * 0.12;
     ctrlBox = [[UIView alloc] initWithFrame:CGRectMake(bx, by, bw, bh)];
-    ctrlBox.backgroundColor = rgba(8, 8, 12, 0.95);
-    ctrlBox.layer.cornerRadius = 24;
-    ctrlBox.layer.borderColor = rgba(60, 60, 90, 0.35).CGColor;
+    ctrlBox.backgroundColor = rgba(6, 6, 12, 0.94);
+    ctrlBox.layer.cornerRadius = 26;
+    ctrlBox.layer.borderColor = rgba(80, 80, 120, 0.2).CGColor;
     ctrlBox.layer.borderWidth = 0.5;
-    ctrlBox.layer.shadowColor = UIColor.blackColor.CGColor;
-    ctrlBox.layer.shadowOpacity = 0.55;
-    ctrlBox.layer.shadowOffset = CGSizeMake(0, 10);
-    ctrlBox.layer.shadowRadius = 28;
+    ctrlBox.layer.shadowColor = rgba(60, 130, 255, 0.2).CGColor;
+    ctrlBox.layer.shadowOpacity = 0.6;
+    ctrlBox.layer.shadowOffset = CGSizeMake(0, 12);
+    ctrlBox.layer.shadowRadius = 35;
     ctrlBox.tag = 100;
 
-    // Top accent glow
+    // Rainbow accent line
     accentLine = [CAGradientLayer layer];
-    accentLine.frame = CGRectMake(0, 0, bw, 2.5);
-    accentLine.colors = @[(id)rgba(60, 130, 255, 0.8).CGColor,
-                          (id)rgba(120, 80, 255, 0.5).CGColor,
-                          (id)rgba(60, 130, 255, 0).CGColor];
+    accentLine.frame = CGRectMake(0, 0, bw, 3);
+    accentLine.colors = @[(id)rgba(255, 80, 80, 0.8).CGColor,
+                          (id)rgba(80, 80, 255, 0.5).CGColor,
+                          (id)rgba(255, 80, 80, 0).CGColor];
     accentLine.startPoint = CGPointMake(0, 0);
     accentLine.endPoint = CGPointMake(1, 0);
     [ctrlBox.layer addSublayer:accentLine];
@@ -239,84 +240,73 @@ static void udpSend(NSString *m) {
     // Inner glow
     CAGradientLayer *innerGlow = [CAGradientLayer layer];
     innerGlow.frame = ctrlBox.bounds;
-    innerGlow.colors = @[(id)rgba(35, 35, 60, 0.1).CGColor, (id)rgba(10, 10, 20, 0).CGColor];
+    innerGlow.colors = @[(id)rgba(40, 40, 70, 0.08).CGColor, (id)rgba(6, 6, 12, 0).CGColor];
     innerGlow.startPoint = CGPointMake(0, 0);
     innerGlow.endPoint = CGPointMake(1, 1);
     [ctrlBox.layer addSublayer:innerGlow];
 
-    CGFloat yy = 12;
+    CGFloat yy = 10;
 
-    // ---- Marquee Names ----
-    UIView *marqueeBox = [[UIView alloc] initWithFrame:CGRectMake(12, yy, bw-24, 34)];
-    marqueeBox.backgroundColor = rgba(18, 18, 30, 0.6);
+    // ---- Marquee Names (Fast + Rainbow) ----
+    UIView *marqueeBox = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 34)];
+    marqueeBox.backgroundColor = rgba(12, 12, 24, 0.6);
     marqueeBox.layer.cornerRadius = 17;
     marqueeBox.clipsToBounds = YES;
+    marqueeBox.layer.borderColor = rgba(60, 60, 100, 0.15).CGColor;
+    marqueeBox.layer.borderWidth = 0.5;
 
-    UILabel *marqueeLbl = [[UILabel alloc] init];
+    marqueeLbl = [[UILabel alloc] init];
     NSString *singleTxt = marqueeStr;
-    CGSize singleSz = [singleTxt sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:13 weight:UIFontWeightSemibold]}];
+    CGSize singleSz = [singleTxt sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12 weight:UIFontWeightBold]}];
     CGFloat singleW = singleSz.width + 24;
     marqueeLbl.frame = CGRectMake(0, 0, singleW * 2, 34);
     marqueeLbl.text = [singleTxt stringByAppendingString:singleTxt];
-    marqueeLbl.textColor = rgba(235, 240, 255, 0.95);
-    marqueeLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    marqueeLbl.textColor = rgba(240, 245, 255, 0.92);
+    marqueeLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
     [marqueeBox addSubview:marqueeLbl];
 
     CGFloat cw = marqueeBox.frame.size.width;
     if (singleW > cw) {
-        [UIView animateWithDuration:singleW/22.0 delay:0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionRepeat animations:^{
+        [UIView animateWithDuration:singleW/30.0 delay:0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionRepeat animations:^{
             marqueeLbl.transform = CGAffineTransformMakeTranslation(-singleW, 0);
         } completion:nil];
     }
-
-    linkBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    linkBtn.frame = CGRectMake(bw-24-10, yy+5, 26, 26);
-    linkBtn.backgroundColor = rgba(40, 40, 65, 0.7);
-    linkBtn.layer.cornerRadius = 13;
-    linkBtn.titleLabel.font = [UIFont boldSystemFontOfSize:9];
-    [linkBtn setTitle:@"دمج" forState:UIControlStateNormal];
-    [linkBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
-    [linkBtn addTarget:self action:@selector(toggleMerge) forControlEvents:UIControlEventTouchUpInside];
-    linkBtn.tag = 500;
-
     [ctrlBox addSubview:marqueeBox];
-    [ctrlBox addSubview:linkBtn];
-    [self updateMergeUI];
-    yy += 38;
+    yy += 40;
 
-    // ---- Speed Row ----
-    UILabel *spLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, yy, 90, 16)];
+    // ---- Speed ----
+    UILabel *spLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, yy, 90, 14)];
     spLbl.text = @"سرعة النقر";
-    spLbl.textColor = rgba(150, 160, 190, 0.7);
+    spLbl.textColor = rgba(150, 160, 190, 0.65);
     spLbl.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
     [ctrlBox addSubview:spLbl];
 
-    delayLabel = [[UILabel alloc] initWithFrame:CGRectMake(bw-90, yy, 76, 16)];
+    delayLabel = [[UILabel alloc] initWithFrame:CGRectMake(bw-95, yy, 80, 14)];
     delayLabel.text = @"030 ms";
-    delayLabel.textColor = rgba(100, 180, 255, 0.9);
+    delayLabel.textColor = rgba(100, 180, 255, 0.85);
     delayLabel.font = [UIFont fontWithName:@"Menlo-Bold" size:11] ?: [UIFont boldSystemFontOfSize:11];
     delayLabel.textAlignment = NSTextAlignmentRight;
     [ctrlBox addSubview:delayLabel];
-    yy += 18;
+    yy += 16;
 
-    // ---- Slider ----
+    // Slider
     delaySlider = [[UISlider alloc] initWithFrame:CGRectMake(10, yy, bw-20, 22)];
     delaySlider.minimumValue = 5;
     delaySlider.maximumValue = 500;
     delaySlider.value = 30;
     delaySlider.continuous = YES;
     delaySlider.minimumTrackTintColor = rgba(60, 130, 255, 0.9);
-    delaySlider.maximumTrackTintColor = rgba(40, 40, 65, 0.6);
+    delaySlider.maximumTrackTintColor = rgba(35, 35, 55, 0.6);
     [delaySlider setThumbImage:[self thumbImage] forState:UIControlStateNormal];
     [delaySlider addTarget:self action:@selector(speedChange) forControlEvents:UIControlEventValueChanged];
     [ctrlBox addSubview:delaySlider];
-    yy += 28;
+    yy += 26;
 
-    // ---- Buttons Row ----
+    // ---- Run/Hide Row ----
     runBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    runBtn.frame = CGRectMake(12, yy, (bw-30)*0.65, 38);
+    runBtn.frame = CGRectMake(10, yy, (bw-26)*0.62, 38);
     runBtn.backgroundColor = rgba(40, 100, 230, 1);
-    runBtn.layer.cornerRadius = 15;
+    runBtn.layer.cornerRadius = 16;
     runBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     [runBtn setTitle:@"▶  تشغيل" forState:UIControlStateNormal];
     [runBtn setTitleColor:rgba(220, 230, 255, 1) forState:UIControlStateNormal];
@@ -324,21 +314,39 @@ static void udpSend(NSString *m) {
     [ctrlBox addSubview:runBtn];
 
     UIButton *hideBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    hideBtn.frame = CGRectMake(CGRectGetMaxX(runBtn.frame)+6, yy, (bw-30)*0.35, 38);
-    hideBtn.backgroundColor = rgba(40, 40, 60, 0.7);
-    hideBtn.layer.cornerRadius = 15;
-    hideBtn.titleLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightBold];
-    [hideBtn setTitle:@"✕" forState:UIControlStateNormal];
-    [hideBtn setTitleColor:rgba(160, 170, 200, 0.8) forState:UIControlStateNormal];
+    hideBtn.frame = CGRectMake(CGRectGetMaxX(runBtn.frame)+6, yy, (bw-26)*0.38, 38);
+    hideBtn.backgroundColor = rgba(35, 35, 55, 0.7);
+    hideBtn.layer.cornerRadius = 16;
+    hideBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+    [hideBtn setTitle:@"✕ إخفاء" forState:UIControlStateNormal];
+    [hideBtn setTitleColor:rgba(150, 160, 190, 0.9) forState:UIControlStateNormal];
     [hideBtn addTarget:self action:@selector(hideAll) forControlEvents:UIControlEventTouchUpInside];
     [ctrlBox addSubview:hideBtn];
     yy += 44;
 
+    // ---- Merge Row ----
+    UIView *mergeRow = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 32)];
+    mergeRow.backgroundColor = rgba(12, 12, 24, 0.5);
+    mergeRow.layer.cornerRadius = 16;
+    mergeRow.layer.borderColor = rgba(60, 200, 100, 0.15).CGColor;
+    mergeRow.layer.borderWidth = 0.5;
+
+    mergeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    mergeBtn.frame = CGRectMake(0, 0, mergeRow.frame.size.width, 32);
+    mergeBtn.backgroundColor = [UIColor clearColor];
+    mergeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
+    [mergeBtn setTitle:@"○  دمج الحسابات" forState:UIControlStateNormal];
+    [mergeBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
+    [mergeBtn addTarget:self action:@selector(toggleMerge) forControlEvents:UIControlEventTouchUpInside];
+    [mergeRow addSubview:mergeBtn];
+    [ctrlBox addSubview:mergeRow];
+    yy += 38;
+
     // ---- Footer ----
-    UILabel *footer = [[UILabel alloc] initWithFrame:CGRectMake(0, yy + 2, bw, bh - yy - 4)];
+    UILabel *footer = [[UILabel alloc] initWithFrame:CGRectMake(0, yy, bw, bh-yy-2)];
     footer.text = @"حقوق عبدالإله";
-    footer.textColor = rgba(90, 100, 130, 0.35);
-    footer.font = [UIFont systemFontOfSize:7.5 weight:UIFontWeightLight];
+    footer.textColor = rgba(80, 90, 120, 0.3);
+    footer.font = [UIFont systemFontOfSize:7 weight:UIFontWeightLight];
     footer.textAlignment = NSTextAlignmentCenter;
     [ctrlBox addSubview:footer];
 
@@ -349,17 +357,17 @@ static void udpSend(NSString *m) {
     [w addSubview:ctrlBox];
     [w bringSubviewToFront:ctrlBox];
 
-    // ---- Tap Circle (Pure Black) ----
+    // ---- Tap Circle ----
     CGFloat cs = 46, cx = (sw-cs)/2, cy = sh * 0.58;
     tapCircle = [[UIView alloc] initWithFrame:CGRectMake(cx, cy, cs, cs)];
-    tapCircle.backgroundColor = rgba(16, 16, 16, 0.95);
+    tapCircle.backgroundColor = rgba(14, 14, 14, 0.95);
     tapCircle.layer.cornerRadius = cs/2;
     tapCircle.layer.borderColor = rgba(255, 255, 255, 0.1).CGColor;
     tapCircle.layer.borderWidth = 1.5;
     tapCircle.layer.shadowColor = UIColor.blackColor.CGColor;
     tapCircle.layer.shadowOpacity = 0.5;
     tapCircle.layer.shadowOffset = CGSizeMake(0, 0);
-    tapCircle.layer.shadowRadius = 12;
+    tapCircle.layer.shadowRadius = 10;
     tapCircle.userInteractionEnabled = YES;
     tapCircle.tag = 300;
 
@@ -389,32 +397,41 @@ static void udpSend(NSString *m) {
     [w bringSubviewToFront:tapCircle];
 
     udpInit();
+    [self startRainbow];
+    NSLog(@"[YLT] UI ready");
+}
 
-    // Rainbow color cycling
++ (void)startRainbow {
     static CGFloat hue = 0;
     rainbowTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_timer(rainbowTimer, DISPATCH_TIME_NOW, 0.5 * NSEC_PER_SEC, 0);
+    dispatch_source_set_timer(rainbowTimer, DISPATCH_TIME_NOW, 0.4 * NSEC_PER_SEC, 0);
     dispatch_source_set_event_handler(rainbowTimer, ^{
-        if (!accentLine || !ctrlBox) return;
-        hue += 1.0/14.0;
+        if (!accentLine) return;
+        hue += 1.0/16.0;
         if (hue > 1) hue -= 1;
-        UIColor *c1 = [UIColor colorWithHue:hue saturation:0.9 brightness:0.9 alpha:0.8];
-        UIColor *c2 = [UIColor colorWithHue:fmod(hue+0.3,1) saturation:0.7 brightness:0.8 alpha:0.4];
-        accentLine.colors = @[(id)c1.CGColor, (id)c2.CGColor, (id)rgba(60,130,255,0).CGColor];
-        ctrlBox.layer.borderColor = [UIColor colorWithHue:hue saturation:0.6 brightness:0.5 alpha:0.3].CGColor;
+        UIColor *c1 = [UIColor colorWithHue:hue saturation:1 brightness:1 alpha:0.8];
+        UIColor *c2 = [UIColor colorWithHue:fmod(hue+0.4,1) saturation:0.8 brightness:0.9 alpha:0.4];
+        UIColor *c3 = [UIColor colorWithHue:fmod(hue+0.7,1) saturation:0.6 brightness:0.7 alpha:0.1];
+        accentLine.colors = @[(id)c1.CGColor, (id)c2.CGColor, (id)c3.CGColor];
+        ctrlBox.layer.shadowColor = c1.CGColor;
+        ctrlBox.layer.borderColor = c2.CGColor;
+        if (marqueeLbl) marqueeLbl.textColor = c1;
+        if (mergeBtn) {
+            if (isMain) {
+                mergeBtn.backgroundColor = [UIColor colorWithHue:hue saturation:0.5 brightness:0.3 alpha:0.3];
+            }
+        }
     });
     dispatch_resume(rainbowTimer);
-
-    NSLog(@"[YLT] UI ready");
 }
 
 + (UIImage *)thumbImage {
     return [UIImage imageWithCGImage:({
         UIGraphicsBeginImageContextWithOptions(CGSizeMake(13, 13), NO, 0);
         CGContextRef ctx = UIGraphicsGetCurrentContext();
-        CGContextSetFillColorWithColor(ctx, rgba(255, 255, 255, 0.85).CGColor);
+        CGContextSetFillColorWithColor(ctx, rgba(255, 255, 255, 0.9).CGColor);
         CGContextFillEllipseInRect(ctx, CGRectMake(0.5, 0.5, 12, 12));
-        CGContextSetFillColorWithColor(ctx, rgba(60, 130, 255, 0.25).CGColor);
+        CGContextSetFillColorWithColor(ctx, rgba(60, 130, 255, 0.3).CGColor);
         CGContextFillEllipseInRect(ctx, CGRectMake(2.5, 2.5, 8, 8));
         UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
         UIGraphicsEndImageContext();
@@ -436,15 +453,13 @@ static void udpSend(NSString *m) {
 }
 
 + (void)updateMergeUI {
-    if (!linkBtn) return;
+    if (!mergeBtn) return;
     if (isMain) {
-        linkBtn.backgroundColor = rgba(60, 200, 100, 0.5);
-        [linkBtn setTitle:@"دمج" forState:UIControlStateNormal];
-        [linkBtn setTitleColor:rgba(100, 255, 150, 1) forState:UIControlStateNormal];
+        [mergeBtn setTitle:@"●  تم دمج الحسابات ✓" forState:UIControlStateNormal];
+        [mergeBtn setTitleColor:rgba(100, 255, 150, 1) forState:UIControlStateNormal];
     } else {
-        linkBtn.backgroundColor = rgba(40, 40, 65, 0.7);
-        [linkBtn setTitle:@"دمج" forState:UIControlStateNormal];
-        [linkBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
+        [mergeBtn setTitle:@"○  دمج الحسابات" forState:UIControlStateNormal];
+        [mergeBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
     }
 }
 
@@ -452,9 +467,9 @@ static void udpSend(NSString *m) {
     isMain = !isMain;
     [self updateMergeUI];
     if (isMain) {
-        tapCircle.layer.borderColor = rgba(60, 200, 100, 0.7).CGColor;
+        tapCircle.layer.borderColor = rgba(60, 200, 100, 0.6).CGColor;
         tapCircle.layer.borderWidth = 2.5;
-        [self alert:@"تم دمج الحسابات ✓" msg:@"جميع النسخ مرتبطة بهذه النسخة"];
+        [self alert:@"تم دمج الحسابات ✓" msg:@"جميع النسخ ستتبع هذه النسخة"];
         udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         if (running) udpSend(@"RUN");
     } else {
@@ -520,14 +535,13 @@ static void udpSend(NSString *m) {
         isMain = !isMain;
         [self updateMergeUI];
         if (isMain) {
-            tapCircle.layer.borderColor = rgba(255, 200, 50, 0.7).CGColor;
-            tapCircle.layer.borderWidth = 2;
+            tapCircle.layer.borderColor = rgba(60, 200, 100, 0.6).CGColor;
+            tapCircle.layer.borderWidth = 2.5;
             [self alert:@"✓ رئيسي" msg:@"النسخة الرئيسية - تتحكم بجميع النسخ"];
             udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         } else {
             tapCircle.layer.borderColor = rgba(255, 255, 255, 0.1).CGColor;
             tapCircle.layer.borderWidth = 1.5;
-            [self alert:@"✕ تابع" msg:@"تم إلغاء التحكم الرئيسي"];
         }
     }
 }
@@ -556,8 +570,6 @@ __attribute__((constructor)) static void init() {
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeKeyNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         ensureOnTop();
     }];
-
-    // Periodic room check (every 3s keeps UI on top inside rooms)
     dispatch_async(dispatch_get_main_queue(), ^{
         topTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
