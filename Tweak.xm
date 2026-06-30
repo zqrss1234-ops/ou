@@ -48,74 +48,16 @@ static UIWindow *activeWindow(void) {
     return nil;
 }
 
-#pragma mark - UDP Sync
+#pragma mark - Forward Declarations
 
-static void udpInit(void) {
-    udpFD = socket(AF_INET, SOCK_DGRAM, 0);
-    if (udpFD < 0) return;
-    int opt = 1;
-    setsockopt(udpFD, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    setsockopt(udpFD, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
+@interface YLTapSync : NSObject
++ (void)performLocalTap;
++ (void)startTapping;
++ (void)stopTapping;
+@end
 
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(51551);
-    addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(udpFD, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(udpFD); udpFD = -1; return;
-    }
-
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        char buf[256];
-        while (1) {
-            struct sockaddr_in from;
-            socklen_t flen = sizeof(from);
-            ssize_t n = recvfrom(udpFD, buf, sizeof(buf) - 1, 0, (struct sockaddr *)&from, &flen);
-            if (n > 0) {
-                buf[n] = '\0';
-                NSString *msg = [NSString stringWithUTF8String:buf];
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if ([msg hasPrefix:@"POS:"]) {
-                        NSString *coords = [msg substringFromIndex:4];
-                        NSArray *parts = [coords componentsSeparatedByString:@","];
-                        if (parts.count == 2) {
-                            CGFloat x = [parts[0] floatValue];
-                            CGFloat y = [parts[1] floatValue];
-                            if (!isFirstInstance && circleView && circleView.superview) {
-                                circleView.center = CGPointMake(x, y);
-                            }
-                        }
-                    } else if ([msg hasPrefix:@"TAP"]) {
-                        if (!isFirstInstance && circleView) {
-                            [YLTapSync performLocalTap];
-                        }
-                    }
-                });
-            }
-        }
-    });
-
-    // Broadcast our presence
-    const char *hello = "YLT:HELLO";
-    struct sockaddr_in bc;
-    memset(&bc, 0, sizeof(bc));
-    bc.sin_family = AF_INET;
-    bc.sin_port = htons(51551);
-    inet_aton("255.255.255.255", &bc.sin_addr);
-    sendto(udpFD, hello, strlen(hello), 0, (struct sockaddr *)&bc, sizeof(bc));
-}
-
-static void udpSend(NSString *msg) {
-    if (udpFD < 0) return;
-    const char *cmsg = [msg UTF8String];
-    struct sockaddr_in bc;
-    memset(&bc, 0, sizeof(bc));
-    bc.sin_family = AF_INET;
-    bc.sin_port = htons(51551);
-    inet_aton("255.255.255.255", &bc.sin_addr);
-    sendto(udpFD, cmsg, strlen(cmsg), 0, (struct sockaddr *)&bc, sizeof(bc));
-}
+static void udpInit(void);
+static void udpSend(NSString *msg);
 
 #pragma mark - Tap Actions
 
@@ -181,6 +123,74 @@ static void udpSend(NSString *msg) {
 }
 
 @end
+
+#pragma mark - UDP Sync Implementation
+
+static void udpInit(void) {
+    udpFD = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udpFD < 0) return;
+    int opt = 1;
+    setsockopt(udpFD, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(udpFD, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(51551);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(udpFD, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(udpFD); udpFD = -1; return;
+    }
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        char buf[256];
+        while (1) {
+            struct sockaddr_in from;
+            socklen_t flen = sizeof(from);
+            ssize_t n = recvfrom(udpFD, buf, sizeof(buf) - 1, 0, (struct sockaddr *)&from, &flen);
+            if (n > 0) {
+                buf[n] = '\0';
+                NSString *msg = [NSString stringWithUTF8String:buf];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if ([msg hasPrefix:@"POS:"]) {
+                        NSString *coords = [msg substringFromIndex:4];
+                        NSArray *parts = [coords componentsSeparatedByString:@","];
+                        if (parts.count == 2) {
+                            CGFloat x = [parts[0] floatValue];
+                            CGFloat y = [parts[1] floatValue];
+                            if (!isFirstInstance && circleView && circleView.superview) {
+                                circleView.center = CGPointMake(x, y);
+                            }
+                        }
+                    } else if ([msg hasPrefix:@"TAP"]) {
+                        if (!isFirstInstance && circleView) {
+                            [YLTapSync performLocalTap];
+                        }
+                    }
+                });
+            }
+        }
+    });
+
+    const char *hello = "YLT:HELLO";
+    struct sockaddr_in bc;
+    memset(&bc, 0, sizeof(bc));
+    bc.sin_family = AF_INET;
+    bc.sin_port = htons(51551);
+    inet_aton("255.255.255.255", &bc.sin_addr);
+    sendto(udpFD, hello, strlen(hello), 0, (struct sockaddr *)&bc, sizeof(bc));
+}
+
+static void udpSend(NSString *msg) {
+    if (udpFD < 0) return;
+    const char *cmsg = [msg UTF8String];
+    struct sockaddr_in bc;
+    memset(&bc, 0, sizeof(bc));
+    bc.sin_family = AF_INET;
+    bc.sin_port = htons(51551);
+    inet_aton("255.255.255.255", &bc.sin_addr);
+    sendto(udpFD, cmsg, strlen(cmsg), 0, (struct sockaddr *)&bc, sizeof(bc));
+}
 
 #pragma mark - UI Setup
 
