@@ -3,6 +3,7 @@
 #import <netinet/in.h>
 #import <arpa/inet.h>
 #import <notify.h>
+#import <time.h>
 
 #pragma mark - Names
 
@@ -146,8 +147,9 @@ static void udpInit(void) {
                         isMain = NO; [Tapper stop]; [Controller updateMergeUI];
                     }
                 });
-            } else if (n < 0) {
-                usleep(10000);
+            } else {
+                struct timespec ts = { .tv_sec = 0, .tv_nsec = 10 * 1000000 };
+                nanosleep(&ts, NULL);
             }
         }
     });
