@@ -146,6 +146,8 @@ static void udpInit(void) {
                         isMain = NO; [Tapper stop]; [Controller updateMergeUI];
                     }
                 });
+            } else if (n < 0) {
+                usleep(10000);
             }
         }
     });
@@ -550,7 +552,7 @@ static void sendAll(NSString *msg) {
         [Tapper stop];
         slavingSelf = YES;
         sendAll(@"SLAVE");
-        [Tapper start];
+        if (running) [Tapper start];
         [self alert:@"تم دمج الحسابات ✓" msg:@"جميع النسخ ستتبع هذه النسخة"];
         if (tapCircle)
             sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
@@ -616,6 +618,10 @@ static void sendAll(NSString *msg) {
         isMain = !isMain;
         [self updateMergeUI];
         if (isMain) {
+            [Tapper stop];
+            slavingSelf = YES;
+            sendAll(@"SLAVE");
+            if (running) [Tapper start];
             [self alert:@"✓ رئيسي" msg:@"النسخة الرئيسية - تتحكم بجميع النسخ"];
             if (tapCircle)
                 sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
