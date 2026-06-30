@@ -287,7 +287,6 @@ static void sendAll(NSString *msg) {
 + (void)doTap {
     if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
     [self doTapLocal];
-    sendAll(@"TAP");
 }
 
 + (void)start {
