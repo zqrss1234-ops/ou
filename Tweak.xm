@@ -7,9 +7,9 @@
 #pragma mark - Names
 
 static NSArray<NSString *> *accountNames = @[
-    @"Abdulilah", @"Lahhou", @"Charo", @"Said",
-    @"AbuMeteab", @"Nasser", @"Alkaed",
-    @"Alhbas", @"Alshamara"
+    @"عبدالإله", @"شارو", @"لحلوح", @"سعيد",
+    @"ابومتعب", @"ناصر", @"حاتم",
+    @"الكايد", @"الشمامره", @"الهباس"
 ];
 
 #pragma mark - State
@@ -29,6 +29,7 @@ static BOOL running = NO;
 static BOOL isMain = YES;
 static CGFloat currentDelay = 30.0;
 static int udpSock = -1;
+static BOOL darwinReady = NO;
 
 #pragma mark - Helpers
 
@@ -61,7 +62,7 @@ static void ensureOnTop(void) {
     }
 }
 
-#pragma mark - Darwin IPC (same device)
+#pragma mark - Darwin IPC (same device – no feedback loop)
 
 static int darwinPosToken = 0;
 static int darwinRunToken = 0;
@@ -86,11 +87,13 @@ static void darwinInit(void) {
             [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
     });
     notify_register_dispatch("com.yltool.tap", &darwinTapToken, dispatch_get_main_queue(), ^(int t) {
-        [NSClassFromString(@"Tapper") performSelector:@selector(doTap)];
+        [NSClassFromString(@"Tapper") performSelector:@selector(doTapLocal)];
     });
+    darwinReady = YES;
 }
 
 static void darwinPostPos(CGFloat x, CGFloat y) {
+    if (!darwinReady) return;
     uint64_t state = ((uint64_t)(uint32_t)(x * 10) << 32) | (uint64_t)(uint32_t)(y * 10);
     notify_set_state(darwinPosToken, state);
     notify_post("com.yltool.pos");
@@ -100,7 +103,7 @@ static void darwinPost(const char *name) {
     notify_post(name);
 }
 
-#pragma mark - UDP IPC (cross device)
+#pragma mark - UDP IPC (cross device – no feedback loop)
 
 static void udpInit(void) {
     udpSock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -116,7 +119,7 @@ static void udpInit(void) {
     addr.sin_port = htons(51551);
     addr.sin_addr.s_addr = INADDR_ANY;
     if (bind(udpSock, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(udpSock); udpSock = -1; return; }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
         char buf[256];
         while (1) {
             struct sockaddr_in from;
@@ -137,7 +140,7 @@ static void udpInit(void) {
                         if (running) { running = NO; [NSClassFromString(@"Tapper") performSelector:@selector(stop)];
                             [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
                     } else if ([m isEqualToString:@"TAP"]) {
-                        [NSClassFromString(@"Tapper") performSelector:@selector(doTap)];
+                        [NSClassFromString(@"Tapper") performSelector:@selector(doTapLocal)];
                     }
                 });
             }
@@ -161,12 +164,12 @@ static void sendAll(NSString *msg) {
     if ([msg hasPrefix:@"POS:"]) {
         NSArray *p = [[msg substringFromIndex:4] componentsSeparatedByString:@","];
         if (p.count == 2) darwinPostPos([p[0] floatValue], [p[1] floatValue]);
-    } else if ([msg isEqualToString:@"RUN"]) {
-        darwinPost("com.yltool.run");
-    } else if ([msg isEqualToString:@"STOP"]) {
-        darwinPost("com.yltool.stop");
-    } else if ([msg isEqualToString:@"TAP"]) {
-        darwinPost("com.yltool.tap");
+    } else {
+        const char *n = NULL;
+        if ([msg isEqualToString:@"RUN"]) n = "com.yltool.run";
+        else if ([msg isEqualToString:@"STOP"]) n = "com.yltool.stop";
+        else if ([msg isEqualToString:@"TAP"]) n = "com.yltool.tap";
+        if (n) darwinPost(n);
     }
     udpSend(msg);
 }
@@ -175,13 +178,14 @@ static void sendAll(NSString *msg) {
 
 @interface Tapper : NSObject
 + (void)doTap;
++ (void)doTapLocal;
 + (void)start;
 + (void)stop;
 @end
 
 @implementation Tapper
 
-+ (void)doTap {
++ (void)doTapLocal {
     if (!tapCircle || !running) return;
 
     [UIView animateWithDuration:0.015 animations:^{
@@ -222,7 +226,10 @@ static void sendAll(NSString *msg) {
     [UIView animateWithDuration:0.3 animations:^{
         fx.alpha = 0; fx.transform = CGAffineTransformMakeScale(4, 4);
     } completion:^(BOOL f) { [fx removeFromSuperview]; }];
+}
 
++ (void)doTap {
+    [self doTapLocal];
     sendAll(@"TAP");
 }
 
@@ -300,7 +307,7 @@ static void sendAll(NSString *msg) {
 
     CGFloat yy = 10;
 
-    // ---- Marquee Names ----
+    // ---- Marquee Names (Arabic, slow scroll) ----
     UIView *marqueeBox = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 34)];
     marqueeBox.backgroundColor = rgba(12, 12, 24, 0.6);
     marqueeBox.layer.cornerRadius = 17;
@@ -320,7 +327,7 @@ static void sendAll(NSString *msg) {
 
     CGFloat cw = marqueeBox.frame.size.width;
     if (singleW > cw) {
-        [UIView animateWithDuration:singleW/40.0 delay:0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionRepeat animations:^{
+        [UIView animateWithDuration:singleW/80.0 delay:0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionRepeat animations:^{
             marqueeLbl.transform = CGAffineTransformMakeTranslation(-singleW, 0);
         } completion:nil];
     }
@@ -408,7 +415,7 @@ static void sendAll(NSString *msg) {
     [w addSubview:ctrlBox];
     [w bringSubviewToFront:ctrlBox];
 
-    // ---- Tap Circle (no number) ----
+    // ---- Tap Circle (مستحيل faded) ----
     CGFloat cs = 46, cx = (sw-cs)/2, cy = sh * 0.58;
     tapCircle = [[UIView alloc] initWithFrame:CGRectMake(cx, cy, cs, cs)];
     tapCircle.backgroundColor = rgba(14, 14, 14, 0.95);
@@ -422,13 +429,13 @@ static void sendAll(NSString *msg) {
     tapCircle.userInteractionEnabled = YES;
     tapCircle.tag = 300;
 
-    UIView *oring = [[UIView alloc] initWithFrame:CGRectInset(tapCircle.bounds, 5, 5)];
-    oring.backgroundColor = [UIColor clearColor];
-    oring.layer.cornerRadius = (cs-10)/2;
-    oring.layer.borderColor = rgba(255, 255, 255, 0.05).CGColor;
-    oring.layer.borderWidth = 0.5;
-    oring.userInteractionEnabled = NO;
-    [tapCircle addSubview:oring];
+    UILabel *impossibleLbl = [[UILabel alloc] initWithFrame:tapCircle.bounds];
+    impossibleLbl.text = @"مستحيل";
+    impossibleLbl.textColor = rgba(255, 255, 255, 0.12);
+    impossibleLbl.font = [UIFont boldSystemFontOfSize:8];
+    impossibleLbl.textAlignment = NSTextAlignmentCenter;
+    impossibleLbl.userInteractionEnabled = NO;
+    [tapCircle addSubview:impossibleLbl];
 
     UIPanGestureRecognizer *cg = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragCircle:)];
     [tapCircle addGestureRecognizer:cg];
