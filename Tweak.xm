@@ -76,39 +76,17 @@ static void ensureOnTop(void) {
     }
 }
 
-#pragma mark - Background Task (BacRunner – permanent)
-
-static void patchBackgroundModes(void) {
-    CFBundleRef bundle = CFBundleGetMainBundle();
-    if (!bundle) return;
-    CFMutableDictionaryRef info = (CFMutableDictionaryRef)CFBundleGetInfoDictionary(bundle);
-    if (!info) return;
-    CFDictionarySetValue(info, CFSTR("UIBackgroundModes"), (__bridge CFArrayRef)@[@"voip", @"audio", @"fetch"]);
-}
+#pragma mark - Background Task (BacRunner – keep alive)
 
 static void startBgTask(void) {
-    patchBackgroundModes();
     if (bgTask != UIBackgroundTaskInvalid) return;
     __block UIBackgroundTaskIdentifier task = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"YLToolBg" expirationHandler:^{
         [[UIApplication sharedApplication] endBackgroundTask:task];
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (bgTask == task) bgTask = UIBackgroundTaskInvalid;
             startBgTask();
         });
     }];
-    if (task != UIBackgroundTaskInvalid) {
-        bgTask = task;
-    } else {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            startBgTask();
-        });
-    }
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        [[UIApplication sharedApplication] setKeepAliveTimeout:600 handler:^{
-            NSLog(@"[YLT] Keep alive");
-        }];
-    });
+    if (task != UIBackgroundTaskInvalid) bgTask = task;
 }
 
 #pragma mark - Forward Declarations
@@ -698,25 +676,6 @@ static void sendAll(NSString *msg) {
 
 #pragma mark - Constructor
 
-#pragma mark - Suspension Prevention (BacRunner)
-
-@interface UIApplication (YLToolSuspend)
-- (void)_handleApplicationSuspend:(id)arg;
-- (void)_prepareForSuspend;
-@end
-
-%hook UIApplication
-- (void)_handleApplicationSuspend:(id)arg {
-    return;
-}
-- (void)_prepareForSuspend {
-    return;
-}
-- (double)backgroundTimeRemaining {
-    return DBL_MAX;
-}
-%end
-
 __attribute__((constructor)) static void init() {
     NSSetUncaughtExceptionHandler(&exceptionHandler);
     signal(SIGSEGV, crashHandler);
@@ -747,7 +706,6 @@ __attribute__((constructor)) static void init() {
         ensureOnTop();
     }];
     dispatch_async(dispatch_get_main_queue(), ^{
-        startBgTask();
         topTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
         dispatch_source_set_event_handler(topTimer, ^{ ensureOnTop(); });
