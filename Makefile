@@ -8,7 +8,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = YLTool
 
 YLTool_FILES = Tweak.xm
-YLTool_CFLAGS = -fobjc-arc
+YLTool_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 YLTool_LDFLAGS =
 YLTool_FRAMEWORKS = UIKit Foundation
 YLTool_PRIVATE_FRAMEWORKS =

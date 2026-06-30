@@ -338,7 +338,12 @@ static dispatch_source_t tapTimer = NULL;
             }
         }
     }
-    if (!keyWindow) keyWindow = [[UIApplication sharedApplication] keyWindow];
+    if (!keyWindow) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        keyWindow = [[UIApplication sharedApplication] keyWindow];
+#pragma clang diagnostic pop
+    }
     if (!keyWindow) return;
 
     // Convert circle center to key window coordinates
@@ -451,7 +456,12 @@ static dispatch_source_t tapTimer = NULL;
             }
         }
     }
-    if (!keyWindow) keyWindow = [[UIApplication sharedApplication] keyWindow];
+    if (!keyWindow) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        keyWindow = [[UIApplication sharedApplication] keyWindow];
+#pragma clang diagnostic pop
+    }
     rootVC = keyWindow.rootViewController;
     if (!rootVC) rootVC = tweakWindow.rootViewController;
     if (!rootVC) return;
