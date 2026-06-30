@@ -100,21 +100,37 @@ static int darwinTapToken = 0;
 
 static void darwinInit(void) {
     notify_register_dispatch("com.yltool.pos", &darwinPosToken, dispatch_get_main_queue(), ^(int t) {
-        uint64_t state;
-        notify_get_state(t, &state);
-        CGFloat x = (CGFloat)(state >> 32) / 10.0;
-        CGFloat y = (CGFloat)(state & 0xFFFFFFFF) / 10.0;
-        if (tapCircle && tapCircle.superview)
-            tapCircle.center = CGPointMake(x, y);
+        @try {
+            uint64_t state;
+            notify_get_state(t, &state);
+            CGFloat x = (CGFloat)(state >> 32) / 10.0;
+            CGFloat y = (CGFloat)(state & 0xFFFFFFFF) / 10.0;
+            if (tapCircle && tapCircle.superview)
+                tapCircle.center = CGPointMake(x, y);
+        } @catch (NSException *e) {
+            NSLog(@"[YLT] Darwin pos error: %@ %@", e.name, e.reason);
+        }
     });
     notify_register_dispatch("com.yltool.run", &darwinRunToken, dispatch_get_main_queue(), ^(int t) {
-        if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
+        @try {
+            if (!running) { running = YES; [Controller updateRunUI]; }
+        } @catch (NSException *e) {
+            NSLog(@"[YLT] Darwin run error: %@ %@", e.name, e.reason);
+        }
     });
     notify_register_dispatch("com.yltool.stop", &darwinStopToken, dispatch_get_main_queue(), ^(int t) {
-        if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
+        @try {
+            if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
+        } @catch (NSException *e) {
+            NSLog(@"[YLT] Darwin stop error: %@ %@", e.name, e.reason);
+        }
     });
     notify_register_dispatch("com.yltool.tap", &darwinTapToken, dispatch_get_main_queue(), ^(int t) {
-        [Tapper doTapLocal];
+        @try {
+            [Tapper doTapLocal];
+        } @catch (NSException *e) {
+            NSLog(@"[YLT] Darwin tap error: %@ %@", e.name, e.reason);
+        }
     });
 }
 
@@ -148,25 +164,33 @@ static void udpInit(void) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
         char buf[256];
         while (1) {
-            struct sockaddr_in from;
-            socklen_t flen = sizeof(from);
-            ssize_t n = recvfrom(udpSock, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
-            if (n > 0) {
-                buf[n] = 0;
-                NSString *m = [NSString stringWithUTF8String:buf];
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if ([m hasPrefix:@"POS:"]) {
-                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                        if (p.count == 2 && tapCircle && tapCircle.superview)
-                            tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
-                    } else if ([m isEqualToString:@"RUN"]) {
-                        if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
-                    } else if ([m isEqualToString:@"STOP"]) {
-                        if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
-                    } else if ([m isEqualToString:@"TAP"]) {
-                        [Tapper doTapLocal];
-                    }
-                });
+            @try {
+                struct sockaddr_in from;
+                socklen_t flen = sizeof(from);
+                ssize_t n = recvfrom(udpSock, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
+                if (n > 0) {
+                    buf[n] = 0;
+                    NSString *m = [NSString stringWithUTF8String:buf];
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        @try {
+                            if ([m hasPrefix:@"POS:"]) {
+                                NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
+                                if (p.count == 2 && tapCircle && tapCircle.superview)
+                                    tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                            } else if ([m isEqualToString:@"RUN"]) {
+                                if (!running) { running = YES; [Controller updateRunUI]; }
+                            } else if ([m isEqualToString:@"STOP"]) {
+                                if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
+                            } else if ([m isEqualToString:@"TAP"]) {
+                                [Tapper doTapLocal];
+                            }
+                        } @catch (NSException *e) {
+                            NSLog(@"[YLT] UDP msg error: %@ %@", e.name, e.reason);
+                        }
+                    });
+                }
+            } @catch (NSException *e) {
+                NSLog(@"[YLT] UDP recv error: %@ %@", e.name, e.reason);
             }
         }
     });
@@ -204,6 +228,7 @@ static void sendAll(NSString *msg) {
 
 + (void)doTapLocal {
     if (!tapCircle || !running) return;
+    if (!tapCircle.superview) return;
 
     [UIView animateWithDuration:0.015 animations:^{
         tapCircle.transform = CGAffineTransformMakeScale(0.78, 0.78);
@@ -215,34 +240,38 @@ static void sendAll(NSString *msg) {
         }];
     }];
 
-    UIWindow *w = activeWindow();
-    if (!w) return;
+    @try {
+        UIWindow *w = activeWindow();
+        if (!w) return;
 
-    BOOL ch = tapCircle.hidden, bh = ctrlBox.hidden;
-    tapCircle.hidden = YES; ctrlBox.hidden = YES;
+        BOOL ch = tapCircle.hidden, bh = ctrlBox.hidden;
+        tapCircle.hidden = YES; ctrlBox.hidden = YES;
 
-    CGPoint pt = [tapCircle.superview convertPoint:tapCircle.center toView:w];
-    UIView *target = [w hitTest:pt withEvent:nil];
+        CGPoint pt = [tapCircle.superview convertPoint:tapCircle.center toView:w];
+        UIView *target = [w hitTest:pt withEvent:nil];
 
-    tapCircle.hidden = ch; ctrlBox.hidden = bh;
+        tapCircle.hidden = ch; ctrlBox.hidden = bh;
 
-    if (!target || target == tapCircle) return;
+        if (!target || target == tapCircle) return;
 
-    UIView *hit = target;
-    while (hit && ![hit isKindOfClass:[UIControl class]]) hit = hit.superview;
-    UIControl *ctrl = (UIControl *)hit;
-    if (ctrl) {
-        [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
-        [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
+        UIView *hit = target;
+        while (hit && ![hit isKindOfClass:[UIControl class]]) hit = hit.superview;
+        UIControl *ctrl = (UIControl *)hit;
+        if (ctrl) {
+            [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
+            [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
+        }
+
+        UIView *fx = [[UIView alloc] initWithFrame:CGRectMake(0,0,16,16)];
+        fx.center = pt; fx.backgroundColor = rgba(100, 180, 255, 0.5);
+        fx.layer.cornerRadius = 8; fx.userInteractionEnabled = NO;
+        [w addSubview:fx];
+        [UIView animateWithDuration:0.3 animations:^{
+            fx.alpha = 0; fx.transform = CGAffineTransformMakeScale(4, 4);
+        } completion:^(BOOL f) { [fx removeFromSuperview]; }];
+    } @catch (NSException *e) {
+        NSLog(@"[YLT] Tap error: %@ %@", e.name, e.reason);
     }
-
-    UIView *fx = [[UIView alloc] initWithFrame:CGRectMake(0,0,16,16)];
-    fx.center = pt; fx.backgroundColor = rgba(100, 180, 255, 0.5);
-    fx.layer.cornerRadius = 8; fx.userInteractionEnabled = NO;
-    [w addSubview:fx];
-    [UIView animateWithDuration:0.3 animations:^{
-        fx.alpha = 0; fx.transform = CGAffineTransformMakeScale(4, 4);
-    } completion:^(BOOL f) { [fx removeFromSuperview]; }];
 }
 
 + (void)doTap {
