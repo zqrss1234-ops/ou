@@ -7,9 +7,9 @@
 #pragma mark - Names
 
 static NSArray<NSString *> *accountNames = @[
-    @"ÿπÿ®ÿØÿßŸÑÿ•ŸÑŸá", @"ÿ¥ÿßÿ±Ÿà", @"ŸÑÿ≠ŸÑŸàÿ≠", @"ÿ≥ÿπŸäÿØ",
-    @"ÿßÿ®ŸàŸÖÿ™ÿπÿ®", @"ŸÜÿßÿµÿ±", @"ÿ≠ÿßÿ™ŸÖ",
-    @"ÿßŸÑŸÉÿßŸäÿØ", @"ÿßŸÑÿ¥ŸÖÿßŸÖÿ±Ÿá", @"ÿßŸÑŸáÿ®ÿßÿ≥"
+    @"+¶+ø+ª+∫+‰+—+‰+Á", @"+¶+∫+¶+Í", @"+‰+°+‰+Í+°", @"+¶+¶+Ë+ª",
+    @"+∫+ø+Í+‡+¨+¶+ø", @"+Â+∫+¶+¶", @"+°+∫+¨+‡",
+    @"+∫+‰+‚+∫+Ë+ª", @"+∫+‰+¶+‡+∫+‡+¶+Á", @"+∫+‰+Á+ø+∫+¶"
 ];
 
 #pragma mark - State
@@ -21,7 +21,6 @@ static UISlider *delaySlider = nil;
 static UILabel *delayLabel = nil;
 static UIButton *runBtn = nil;
 static UIButton *mergeBtn = nil;
-static UIView *mergeDot = nil;
 static dispatch_source_t tapTimer = NULL;
 static dispatch_source_t topTimer = NULL;
 static dispatch_source_t rainbowTimer = NULL;
@@ -29,8 +28,9 @@ static dispatch_source_t marqueeTimer = NULL;
 static CAGradientLayer *accentLine = nil;
 static BOOL running = NO;
 static BOOL isMain = YES;
-static CGFloat currentDelay = 100.0;
+static CGFloat currentDelay = 30.0;
 static int udpSock = -1;
+static BOOL darwinReady = NO;
 
 #pragma mark - Helpers
 
@@ -63,7 +63,7 @@ static void ensureOnTop(void) {
     }
 }
 
-#pragma mark - Darwin IPC (same device)
+#pragma mark - Darwin IPC (same device G«Ù no feedback loop)
 
 static int darwinPosToken = 0;
 static int darwinRunToken = 0;
@@ -80,18 +80,21 @@ static void darwinInit(void) {
             tapCircle.center = CGPointMake(x, y);
     });
     notify_register_dispatch("com.yltool.run", &darwinRunToken, dispatch_get_main_queue(), ^(int t) {
-        if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
+        if (!running) { running = YES; [NSClassFromString(@"Tapper") performSelector:@selector(start)];
+            [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
     });
     notify_register_dispatch("com.yltool.stop", &darwinStopToken, dispatch_get_main_queue(), ^(int t) {
-        if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
+        if (running) { running = NO; [NSClassFromString(@"Tapper") performSelector:@selector(stop)];
+            [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
     });
     notify_register_dispatch("com.yltool.tap", &darwinTapToken, dispatch_get_main_queue(), ^(int t) {
-        [Tapper doTapLocal];
+        [NSClassFromString(@"Tapper") performSelector:@selector(doTapLocal)];
     });
+    darwinReady = YES;
 }
 
 static void darwinPostPos(CGFloat x, CGFloat y) {
-    if (!darwinPosToken) return;
+    if (!darwinReady) return;
     uint64_t state = ((uint64_t)(uint32_t)(x * 10) << 32) | (uint64_t)(uint32_t)(y * 10);
     notify_set_state(darwinPosToken, state);
     notify_post("com.yltool.pos");
@@ -101,7 +104,7 @@ static void darwinPost(const char *name) {
     notify_post(name);
 }
 
-#pragma mark - UDP IPC (cross device)
+#pragma mark - UDP IPC (cross device G«Ù no feedback loop)
 
 static void udpInit(void) {
     udpSock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -109,36 +112,41 @@ static void udpInit(void) {
     int opt = 1;
     setsockopt(udpSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     setsockopt(udpSock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
+    struct timeval tv = { .tv_sec = 0, .tv_usec = 50000 };
+    setsockopt(udpSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(51551);
     addr.sin_addr.s_addr = INADDR_ANY;
     if (bind(udpSock, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(udpSock); udpSock = -1; return; }
-
-    dispatch_source_t udpSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, udpSock, 0, dispatch_get_main_queue());
-    dispatch_source_set_event_handler(udpSource, ^{
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
         char buf[256];
-        struct sockaddr_in from;
-        socklen_t flen = sizeof(from);
-        ssize_t n = recvfrom(udpSock, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
-        if (n > 0) {
-            buf[n] = 0;
-            NSString *m = [NSString stringWithUTF8String:buf];
-            if ([m hasPrefix:@"POS:"]) {
-                NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                if (p.count == 2 && tapCircle && tapCircle.superview)
-                    tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
-            } else if ([m isEqualToString:@"RUN"]) {
-                if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
-            } else if ([m isEqualToString:@"STOP"]) {
-                if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
-            } else if ([m isEqualToString:@"TAP"]) {
-                [Tapper doTapLocal];
+        while (1) {
+            struct sockaddr_in from;
+            socklen_t flen = sizeof(from);
+            ssize_t n = recvfrom(udpSock, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
+            if (n > 0) {
+                buf[n] = 0;
+                NSString *m = [NSString stringWithUTF8String:buf];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if ([m hasPrefix:@"POS:"]) {
+                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
+                        if (p.count == 2 && tapCircle && tapCircle.superview)
+                            tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                    } else if ([m isEqualToString:@"RUN"]) {
+                        if (!running) { running = YES; [NSClassFromString(@"Tapper") performSelector:@selector(start)];
+                            [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
+                    } else if ([m isEqualToString:@"STOP"]) {
+                        if (running) { running = NO; [NSClassFromString(@"Tapper") performSelector:@selector(stop)];
+                            [NSClassFromString(@"Controller") performSelector:@selector(updateRunUI)]; }
+                    } else if ([m isEqualToString:@"TAP"]) {
+                        [NSClassFromString(@"Tapper") performSelector:@selector(doTapLocal)];
+                    }
+                });
             }
         }
     });
-    dispatch_resume(udpSource);
 }
 
 static void udpSend(NSString *m) {
@@ -187,7 +195,7 @@ static void sendAll(NSString *msg) {
     } completion:^(BOOL f) {
         [UIView animateWithDuration:0.015 animations:^{
             tapCircle.transform = CGAffineTransformIdentity;
-            tapCircle.backgroundColor = rgba(255, 255, 255, 0.12);
+            tapCircle.backgroundColor = rgba(14, 14, 14, 0.95);
         }];
     }];
 
@@ -229,7 +237,7 @@ static void sendAll(NSString *msg) {
 + (void)start {
     if (tapTimer) return;
     CGFloat ms = currentDelay;
-    if (ms < 20) ms = 20;
+    if (ms < 5) ms = 5;
     tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, (ms / 1000.0) * NSEC_PER_SEC, 0);
     dispatch_source_set_event_handler(tapTimer, ^{ [self doTap]; });
@@ -246,8 +254,6 @@ static void sendAll(NSString *msg) {
 
 @interface Controller : NSObject
 + (void)buildUI;
-+ (void)updateRunUI;
-+ (void)updateMergeUI;
 @end
 
 @implementation Controller
@@ -266,99 +272,84 @@ static void sendAll(NSString *msg) {
     CGFloat sw = UIScreen.mainScreen.bounds.size.width;
     CGFloat sh = UIScreen.mainScreen.bounds.size.height;
 
-    NSString *marqueeTxt = @"";
+    NSMutableString *marqueeStr = [NSMutableString string];
     for (NSString *n in accountNames) {
-        marqueeTxt = [marqueeTxt stringByAppendingFormat:@"  ‚óâ  %@", n];
+        [marqueeStr appendFormat:@"  G˘Î  %@", n];
     }
 
-    // ---- Premium Dark Glass Control Box ----
-    CGFloat bw = 236, bh = 218, bx = (sw-bw)/2, by = sh * 0.10;
+    // ---- Premium Control Box ----
+    CGFloat bw = 230, bh = 210, bx = (sw-bw)/2, by = sh * 0.12;
     ctrlBox = [[UIView alloc] initWithFrame:CGRectMake(bx, by, bw, bh)];
-    ctrlBox.backgroundColor = rgba(8, 8, 16, 0.92);
-    ctrlBox.layer.cornerRadius = 28;
-    ctrlBox.layer.borderColor = rgba(100, 100, 140, 0.15).CGColor;
+    ctrlBox.backgroundColor = rgba(6, 6, 12, 0.94);
+    ctrlBox.layer.cornerRadius = 26;
+    ctrlBox.layer.borderColor = rgba(80, 80, 120, 0.2).CGColor;
     ctrlBox.layer.borderWidth = 0.5;
-    ctrlBox.layer.shadowColor = rgba(60, 130, 255, 0.15).CGColor;
-    ctrlBox.layer.shadowOpacity = 0.7;
-    ctrlBox.layer.shadowOffset = CGSizeMake(0, 14);
-    ctrlBox.layer.shadowRadius = 40;
+    ctrlBox.layer.shadowColor = rgba(60, 130, 255, 0.2).CGColor;
+    ctrlBox.layer.shadowOpacity = 0.6;
+    ctrlBox.layer.shadowOffset = CGSizeMake(0, 12);
+    ctrlBox.layer.shadowRadius = 35;
     ctrlBox.tag = 100;
 
-    // Rainbow accent line
     accentLine = [CAGradientLayer layer];
     accentLine.frame = CGRectMake(0, 0, bw, 3);
-    accentLine.colors = @[(id)rgba(255, 80, 80, 0.7).CGColor,
-                          (id)rgba(80, 80, 255, 0.4).CGColor,
+    accentLine.colors = @[(id)rgba(255, 80, 80, 0.8).CGColor,
+                          (id)rgba(80, 80, 255, 0.5).CGColor,
                           (id)rgba(255, 80, 80, 0).CGColor];
     accentLine.startPoint = CGPointMake(0, 0);
     accentLine.endPoint = CGPointMake(1, 0);
     [ctrlBox.layer addSublayer:accentLine];
 
-    // Inner glow
     CAGradientLayer *innerGlow = [CAGradientLayer layer];
     innerGlow.frame = ctrlBox.bounds;
-    innerGlow.colors = @[(id)rgba(50, 50, 80, 0.06).CGColor, (id)rgba(8, 8, 16, 0).CGColor];
+    innerGlow.colors = @[(id)rgba(40, 40, 70, 0.08).CGColor, (id)rgba(6, 6, 12, 0).CGColor];
     innerGlow.startPoint = CGPointMake(0, 0);
     innerGlow.endPoint = CGPointMake(1, 1);
     [ctrlBox.layer addSublayer:innerGlow];
 
     CGFloat yy = 10;
 
-    // ---- Marquee Names (GCD timer, smooth rainbow) ----
+    // ---- Marquee Names (Arabic, slow scroll) ----
     UIView *marqueeBox = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 34)];
-    marqueeBox.backgroundColor = rgba(12, 12, 24, 0.5);
+    marqueeBox.backgroundColor = rgba(12, 12, 24, 0.6);
     marqueeBox.layer.cornerRadius = 17;
     marqueeBox.clipsToBounds = YES;
-    marqueeBox.layer.borderColor = rgba(60, 60, 100, 0.12).CGColor;
+    marqueeBox.layer.borderColor = rgba(60, 60, 100, 0.15).CGColor;
     marqueeBox.layer.borderWidth = 0.5;
 
     marqueeLbl = [[UILabel alloc] init];
-    CGSize singleSz = [marqueeTxt sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12 weight:UIFontWeightBold]}];
+    NSString *singleTxt = marqueeStr;
+    CGSize singleSz = [singleTxt sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12 weight:UIFontWeightBold]}];
     CGFloat singleW = singleSz.width + 24;
     marqueeLbl.frame = CGRectMake(0, 0, singleW * 2, 34);
-    marqueeLbl.text = [marqueeTxt stringByAppendingString:marqueeTxt];
-    marqueeLbl.textColor = rgba(230, 235, 255, 0.92);
+    marqueeLbl.text = [singleTxt stringByAppendingString:singleTxt];
+    marqueeLbl.textColor = rgba(240, 245, 255, 0.92);
     marqueeLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
     [marqueeBox addSubview:marqueeLbl];
     [ctrlBox addSubview:marqueeBox];
-
-    CGFloat cw = marqueeBox.frame.size.width;
-    if (singleW > cw) {
-        __block CGFloat offset = 0;
-        CGFloat speed = singleW / 28.0;
-        marqueeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-        dispatch_source_set_timer(marqueeTimer, DISPATCH_TIME_NOW, (1.0/60.0) * NSEC_PER_SEC, (1.0/60.0) * NSEC_PER_SEC);
-        dispatch_source_set_event_handler(marqueeTimer, ^{
-            offset -= speed / 60.0;
-            if (offset <= -singleW) offset += singleW;
-            marqueeLbl.transform = CGAffineTransformMakeTranslation(offset, 0);
-        });
-        dispatch_resume(marqueeTimer);
-    }
     yy += 40;
 
     // ---- Speed ----
     UILabel *spLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, yy, 90, 14)];
-    spLbl.text = @"ÿ≥ÿ±ÿπÿ© ÿßŸÑŸÜŸÇÿ±";
-    spLbl.textColor = rgba(150, 160, 190, 0.55);
+    spLbl.text = @"+¶+¶+¶+¨ +∫+‰+Â+È+¶";
+    spLbl.textColor = rgba(150, 160, 190, 0.65);
     spLbl.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
     [ctrlBox addSubview:spLbl];
 
     delayLabel = [[UILabel alloc] initWithFrame:CGRectMake(bw-95, yy, 80, 14)];
-    delayLabel.text = @"100 ms";
-    delayLabel.textColor = rgba(100, 180, 255, 0.8);
+    delayLabel.text = @"030 ms";
+    delayLabel.textColor = rgba(100, 180, 255, 0.85);
     delayLabel.font = [UIFont fontWithName:@"Menlo-Bold" size:11] ?: [UIFont boldSystemFontOfSize:11];
     delayLabel.textAlignment = NSTextAlignmentRight;
     [ctrlBox addSubview:delayLabel];
     yy += 16;
 
     delaySlider = [[UISlider alloc] initWithFrame:CGRectMake(10, yy, bw-20, 22)];
-    delaySlider.minimumValue = 50;
+    delaySlider.minimumValue = 5;
     delaySlider.maximumValue = 500;
-    delaySlider.value = 100;
+    delaySlider.value = 30;
     delaySlider.continuous = YES;
-    delaySlider.minimumTrackTintColor = rgba(60, 130, 255, 0.85);
-    delaySlider.maximumTrackTintColor = rgba(35, 35, 55, 0.5);
+    delaySlider.minimumTrackTintColor = rgba(60, 130, 255, 0.9);
+    delaySlider.maximumTrackTintColor = rgba(35, 35, 55, 0.6);
     [delaySlider setThumbImage:[self thumbImage] forState:UIControlStateNormal];
     [delaySlider addTarget:self action:@selector(speedChange) forControlEvents:UIControlEventValueChanged];
     [ctrlBox addSubview:delaySlider];
@@ -366,46 +357,38 @@ static void sendAll(NSString *msg) {
 
     // ---- Run/Hide Row ----
     runBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    runBtn.frame = CGRectMake(10, yy, (bw-26)*0.60, 38);
+    runBtn.frame = CGRectMake(10, yy, (bw-26)*0.62, 38);
     runBtn.backgroundColor = rgba(40, 100, 230, 1);
     runBtn.layer.cornerRadius = 16;
     runBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [runBtn setTitle:@"‚ñ∂  ÿ™ÿ¥ÿ∫ŸäŸÑ" forState:UIControlStateNormal];
+    [runBtn setTitle:@"G˚¶  +¨+¶+¶+Ë+‰" forState:UIControlStateNormal];
     [runBtn setTitleColor:rgba(220, 230, 255, 1) forState:UIControlStateNormal];
-    runBtn.tag = 200;
     [runBtn addTarget:self action:@selector(toggleRun) forControlEvents:UIControlEventTouchUpInside];
     [ctrlBox addSubview:runBtn];
 
     UIButton *hideBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    hideBtn.frame = CGRectMake(CGRectGetMaxX(runBtn.frame)+6, yy, (bw-26)*0.40, 38);
-    hideBtn.backgroundColor = rgba(35, 35, 55, 0.6);
+    hideBtn.frame = CGRectMake(CGRectGetMaxX(runBtn.frame)+6, yy, (bw-26)*0.38, 38);
+    hideBtn.backgroundColor = rgba(35, 35, 55, 0.7);
     hideBtn.layer.cornerRadius = 16;
     hideBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-    [hideBtn setTitle:@"‚úï ÿ•ÿÆŸÅÿßÿ°" forState:UIControlStateNormal];
-    [hideBtn setTitleColor:rgba(150, 160, 190, 0.8) forState:UIControlStateNormal];
+    [hideBtn setTitle:@"G£Ú +—+´+¸+∫+Ì" forState:UIControlStateNormal];
+    [hideBtn setTitleColor:rgba(150, 160, 190, 0.9) forState:UIControlStateNormal];
     [hideBtn addTarget:self action:@selector(hideAll) forControlEvents:UIControlEventTouchUpInside];
     [ctrlBox addSubview:hideBtn];
     yy += 44;
 
     // ---- Merge Row ----
     UIView *mergeRow = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 32)];
-    mergeRow.backgroundColor = rgba(12, 12, 24, 0.45);
+    mergeRow.backgroundColor = rgba(12, 12, 24, 0.5);
     mergeRow.layer.cornerRadius = 16;
-    mergeRow.layer.borderColor = rgba(60, 200, 100, 0.12).CGColor;
+    mergeRow.layer.borderColor = rgba(60, 200, 100, 0.15).CGColor;
     mergeRow.layer.borderWidth = 0.5;
 
-    mergeDot = [[UIView alloc] initWithFrame:CGRectMake(10, 11, 10, 10)];
-    mergeDot.layer.cornerRadius = 5;
-    mergeDot.userInteractionEnabled = NO;
-    mergeDot.backgroundColor = rgba(120, 130, 160, 0.3);
-    [mergeRow addSubview:mergeDot];
-
     mergeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    mergeBtn.frame = CGRectMake(26, 0, mergeRow.frame.size.width-32, 32);
+    mergeBtn.frame = CGRectMake(0, 0, mergeRow.frame.size.width, 32);
     mergeBtn.backgroundColor = [UIColor clearColor];
     mergeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
-    mergeBtn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    [mergeBtn setTitle:@"  ÿØŸÖÿ¨ ÿßŸÑÿ≠ÿ≥ÿßÿ®ÿßÿ™" forState:UIControlStateNormal];
+    [mergeBtn setTitle:@"G˘Ô  +ª+‡+º +∫+‰+°+¶+∫+ø+∫+¨" forState:UIControlStateNormal];
     [mergeBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
     [mergeBtn addTarget:self action:@selector(toggleMerge) forControlEvents:UIControlEventTouchUpInside];
     [mergeRow addSubview:mergeBtn];
@@ -414,8 +397,8 @@ static void sendAll(NSString *msg) {
 
     // ---- Footer ----
     UILabel *footer = [[UILabel alloc] initWithFrame:CGRectMake(0, yy, bw, bh-yy-2)];
-    footer.text = @"ÿ≠ŸÇŸàŸÇ ÿπÿ®ÿØÿßŸÑÿ•ŸÑŸá";
-    footer.textColor = rgba(80, 90, 120, 0.25);
+    footer.text = @"+°+È+Í+È +¶+ø+ª+∫+‰+—+‰+Á";
+    footer.textColor = rgba(80, 90, 120, 0.3);
     footer.font = [UIFont systemFontOfSize:7 weight:UIFontWeightLight];
     footer.textAlignment = NSTextAlignmentCenter;
     [ctrlBox addSubview:footer];
@@ -426,23 +409,23 @@ static void sendAll(NSString *msg) {
     [w addSubview:ctrlBox];
     [w bringSubviewToFront:ctrlBox];
 
-    // ---- Tap Circle ----
-    CGFloat cs = 48, cx = (sw-cs)/2, cy = sh * 0.58;
+    // ---- Tap Circle (white inside, black border, "impossible") ----
+    CGFloat cs = 46, cx = (sw-cs)/2, cy = sh * 0.58;
     tapCircle = [[UIView alloc] initWithFrame:CGRectMake(cx, cy, cs, cs)];
-    tapCircle.backgroundColor = rgba(255, 255, 255, 0.10);
+    tapCircle.backgroundColor = rgba(255, 255, 255, 0.12);
     tapCircle.layer.cornerRadius = cs/2;
-    tapCircle.layer.borderColor = rgba(0, 0, 0, 0.85).CGColor;
+    tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
     tapCircle.layer.borderWidth = 2.5;
     tapCircle.layer.shadowColor = UIColor.blackColor.CGColor;
     tapCircle.layer.shadowOpacity = 0.5;
-    tapCircle.layer.shadowOffset = CGSizeZero;
-    tapCircle.layer.shadowRadius = 12;
+    tapCircle.layer.shadowOffset = CGSizeMake(0, 0);
+    tapCircle.layer.shadowRadius = 10;
     tapCircle.userInteractionEnabled = YES;
     tapCircle.tag = 300;
 
     UILabel *impossibleLbl = [[UILabel alloc] initWithFrame:tapCircle.bounds];
     impossibleLbl.text = @"impossible";
-    impossibleLbl.textColor = rgba(0, 0, 0, 0.20);
+    impossibleLbl.textColor = rgba(0, 0, 0, 0.25);
     impossibleLbl.font = [UIFont boldSystemFontOfSize:7];
     impossibleLbl.textAlignment = NSTextAlignmentCenter;
     impossibleLbl.userInteractionEnabled = NO;
@@ -458,6 +441,20 @@ static void sendAll(NSString *msg) {
     [w addSubview:tapCircle];
     [w bringSubviewToFront:tapCircle];
 
+    CGFloat cw = marqueeBox.frame.size.width;
+    if (singleW > cw) {
+        __block CGFloat offset = 0;
+        CGFloat speed = singleW / 28.0;
+        marqueeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(marqueeTimer, DISPATCH_TIME_NOW, (1.0/60.0) * NSEC_PER_SEC, (1.0/60.0) * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(marqueeTimer, ^{
+            offset -= speed / 60.0;
+            if (offset <= -singleW) offset += singleW;
+            marqueeLbl.transform = CGAffineTransformMakeTranslation(offset, 0);
+        });
+        dispatch_resume(marqueeTimer);
+    }
+
     [self updateMergeUI];
     darwinInit();
     udpInit();
@@ -467,79 +464,76 @@ static void sendAll(NSString *msg) {
 
 + (void)startRainbow {
     static CGFloat hue = 0;
-    if (rainbowTimer) return;
     rainbowTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(rainbowTimer, DISPATCH_TIME_NOW, 0.4 * NSEC_PER_SEC, 0);
     dispatch_source_set_event_handler(rainbowTimer, ^{
         if (!accentLine) return;
         hue += 1.0/16.0;
         if (hue > 1) hue -= 1;
-        UIColor *c1 = [UIColor colorWithHue:hue saturation:1 brightness:1 alpha:0.75];
-        UIColor *c2 = [UIColor colorWithHue:fmod(hue+0.4,1) saturation:0.8 brightness:0.9 alpha:0.35];
-        UIColor *c3 = [UIColor colorWithHue:fmod(hue+0.7,1) saturation:0.6 brightness:0.7 alpha:0.08];
+        UIColor *c1 = [UIColor colorWithHue:hue saturation:1 brightness:1 alpha:0.8];
+        UIColor *c2 = [UIColor colorWithHue:fmod(hue+0.4,1) saturation:0.8 brightness:0.9 alpha:0.4];
+        UIColor *c3 = [UIColor colorWithHue:fmod(hue+0.7,1) saturation:0.6 brightness:0.7 alpha:0.1];
         accentLine.colors = @[(id)c1.CGColor, (id)c2.CGColor, (id)c3.CGColor];
         ctrlBox.layer.shadowColor = c1.CGColor;
         ctrlBox.layer.borderColor = c2.CGColor;
-        if (marqueeLbl)
-            marqueeLbl.textColor = [UIColor colorWithHue:hue saturation:0.5 brightness:1 alpha:0.92];
-        if (mergeBtn && isMain)
-            mergeBtn.backgroundColor = [UIColor colorWithHue:hue saturation:0.5 brightness:0.3 alpha:0.25];
+        if (marqueeLbl) marqueeLbl.textColor = c1;
+        if (mergeBtn && isMain) {
+            mergeBtn.backgroundColor = [UIColor colorWithHue:hue saturation:0.5 brightness:0.3 alpha:0.3];
+        }
     });
     dispatch_resume(rainbowTimer);
 }
 
 + (UIImage *)thumbImage {
-    CGSize sz = CGSizeMake(14, 14);
-    UIGraphicsBeginImageContextWithOptions(sz, NO, 0);
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
-    CGContextSetShadowWithColor(ctx, CGSizeZero, 3, rgba(60, 130, 255, 0.4).CGColor);
-    CGContextSetFillColorWithColor(ctx, rgba(255, 255, 255, 0.85).CGColor);
-    CGContextFillEllipseInRect(ctx, CGRectMake(1, 1, 12, 12));
-    CGContextSetFillColorWithColor(ctx, rgba(60, 130, 255, 0.4).CGColor);
-    CGContextFillEllipseInRect(ctx, CGRectMake(3, 3, 8, 8));
-    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return img;
+    return [UIImage imageWithCGImage:({
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(13, 13), NO, 0);
+        CGContextRef ctx = UIGraphicsGetCurrentContext();
+        CGContextSetFillColorWithColor(ctx, rgba(255, 255, 255, 0.9).CGColor);
+        CGContextFillEllipseInRect(ctx, CGRectMake(0.5, 0.5, 12, 12));
+        CGContextSetFillColorWithColor(ctx, rgba(60, 130, 255, 0.3).CGColor);
+        CGContextFillEllipseInRect(ctx, CGRectMake(2.5, 2.5, 8, 8));
+        UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        img.CGImage;
+    })];
 }
 
 #pragma mark - Actions
 
 + (void)updateRunUI {
     if (!runBtn) return;
-    [UIView animateWithDuration:0.2 animations:^{
-        if (running) {
-            runBtn.backgroundColor = rgba(200, 60, 60, 1);
-            [runBtn setTitle:@"‚ñ†  ÿ•ŸäŸÇÿßŸÅ" forState:UIControlStateNormal];
-        } else {
-            runBtn.backgroundColor = rgba(40, 100, 230, 1);
-            [runBtn setTitle:@"‚ñ∂  ÿ™ÿ¥ÿ∫ŸäŸÑ" forState:UIControlStateNormal];
-        }
-    }];
+    if (running) {
+        runBtn.backgroundColor = rgba(200, 60, 60, 1);
+        [runBtn setTitle:@"G˚·  +—+Ë+È+∫+¸" forState:UIControlStateNormal];
+    } else {
+        runBtn.backgroundColor = rgba(40, 100, 230, 1);
+        [runBtn setTitle:@"G˚¶  +¨+¶+¶+Ë+‰" forState:UIControlStateNormal];
+    }
 }
 
 + (void)updateMergeUI {
     if (!mergeBtn) return;
-    [UIView animateWithDuration:0.2 animations:^{
-        if (isMain) {
-            mergeDot.backgroundColor = rgba(60, 200, 100, 0.8);
-            [mergeBtn setTitle:@"  ÿ™ŸÖ ÿØŸÖÿ¨ ÿßŸÑÿ≠ÿ≥ÿßÿ®ÿßÿ™ ‚úì" forState:UIControlStateNormal];
-            [mergeBtn setTitleColor:rgba(100, 255, 150, 1) forState:UIControlStateNormal];
-        } else {
-            mergeDot.backgroundColor = rgba(120, 130, 160, 0.3);
-            [mergeBtn setTitle:@"  ÿØŸÖÿ¨ ÿßŸÑÿ≠ÿ≥ÿßÿ®ÿßÿ™" forState:UIControlStateNormal];
-            [mergeBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
-        }
-    }];
+    if (isMain) {
+        [mergeBtn setTitle:@"G˘≈  +¨+‡ +ª+‡+º +∫+‰+°+¶+∫+ø+∫+¨ G£Ù" forState:UIControlStateNormal];
+        [mergeBtn setTitleColor:rgba(100, 255, 150, 1) forState:UIControlStateNormal];
+    } else {
+        [mergeBtn setTitle:@"G˘Ô  +ª+‡+º +∫+‰+°+¶+∫+ø+∫+¨" forState:UIControlStateNormal];
+        [mergeBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
+    }
 }
 
 + (void)toggleMerge {
     isMain = !isMain;
     [self updateMergeUI];
     if (isMain) {
-        [self alert:@"ÿ™ŸÖ ÿØŸÖÿ¨ ÿßŸÑÿ≠ÿ≥ÿßÿ®ÿßÿ™ ‚úì" msg:@"ÿ¨ŸÖŸäÿπ ÿßŸÑŸÜÿ≥ÿÆ ÿ≥ÿ™ÿ™ÿ®ÿπ Ÿáÿ∞Ÿá ÿßŸÑŸÜÿ≥ÿÆÿ©"];
-        if (tapCircle)
-            sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
+        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
+        tapCircle.layer.borderWidth = 2.5;
+        [self alert:@"+¨+‡ +ª+‡+º +∫+‰+°+¶+∫+ø+∫+¨ G£Ù" msg:@"+º+‡+Ë+¶ +∫+‰+Â+¶+´ +¶+¨+¨+ø+¶ +Á+¶+Á +∫+‰+Â+¶+´+¨"];
+        sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         if (running) sendAll(@"RUN");
+    } else {
+        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
+        tapCircle.layer.borderWidth = 2.5;
     }
 }
 
@@ -598,10 +592,14 @@ static void sendAll(NSString *msg) {
         isMain = !isMain;
         [self updateMergeUI];
         if (isMain) {
-            [self alert:@"‚úì ÿ±ÿ¶Ÿäÿ≥Ÿä" msg:@"ÿßŸÑŸÜÿ≥ÿÆÿ© ÿßŸÑÿ±ÿ¶Ÿäÿ≥Ÿäÿ© - ÿ™ÿ™ÿ≠ŸÉŸÖ ÿ®ÿ¨ŸÖŸäÿπ ÿßŸÑŸÜÿ≥ÿÆ"];
-            if (tapCircle)
-                sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
-        }
+        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
+        tapCircle.layer.borderWidth = 2.5;
+        [self alert:@"G£Ù +¶+™+Ë+¶+Ë" msg:@"+∫+‰+Â+¶+´+¨ +∫+‰+¶+™+Ë+¶+Ë+¨ - +¨+¨+°+‚+‡ +ø+º+‡+Ë+¶ +∫+‰+Â+¶+´"];
+        sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
+    } else {
+        tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor;
+        tapCircle.layer.borderWidth = 2.5;
+    }
     }
 }
 
