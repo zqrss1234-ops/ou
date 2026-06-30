@@ -1,489 +1,456 @@
 #import <UIKit/UIKit.h>
+#import <sys/socket.h>
+#import <netinet/in.h>
+#import <arpa/inet.h>
 
-#pragma mark - Names Array
+#pragma mark - Names
 
-static NSArray<NSString *> *accountNames = @[
+static NSArray<NSString *> *names = @[
     @"Abdulilah", @"Lahhou", @"Charo", @"Said",
     @"AbuMeteab", @"Nasser", @"Alkaed",
     @"Alhbas", @"Alshamara"
 ];
 
-#pragma mark - Global State
+#pragma mark - State
 
-static UIView *mainContainer = nil;
-static UIView *minimizedContainer = nil;
-static UIButton *toggleBtn = nil;
-static UIButton *mergeBtn = nil;
-static UISlider *speedSlider = nil;
-static UILabel *speedValueLabel = nil;
-static BOOL isRunning = NO;
-static BOOL isExpanded = YES;
-static BOOL accountsMerged = NO;
-static CGFloat currentDelay = 0.0;
+static UIView *panel = nil;
+static UIView *minimizedPanel = nil;
+static UIView *namesBar = nil;
 static UIView *circleView = nil;
-static UILabel *circleLabel = nil;
+static UIButton *toggleBtn = nil;
+static UISlider *speedSlider = nil;
+static UILabel *speedValLabel = nil;
 static dispatch_source_t tapTimer = NULL;
+static BOOL isRunning = NO;
+static CGFloat tapDelay = 0.0;
+static int udpFD = -1;
+static BOOL isFirstInstance = NO;
 
 #pragma mark - Window Helper
 
-static UIWindow *keyWindowHelper(void) {
+static UIWindow *activeWindow(void) {
     if (@available(iOS 13.0, *)) {
-        NSSet<UIScene *> *scenes = [UIApplication sharedApplication].connectedScenes;
-        for (UIScene *scene in scenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
-                UIWindow *w = [(UIWindowScene *)scene windows].firstObject;
+        for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
+            if ([s isKindOfClass:[UIWindowScene class]] && s.activationState == UISceneActivationStateForegroundActive) {
+                UIWindow *w = [(UIWindowScene *)s windows].firstObject;
                 if (w && !w.hidden) return w;
             }
         }
     }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    UIWindow *w = [[UIApplication sharedApplication] keyWindow];
+    UIWindow *w = UIApplication.sharedApplication.keyWindow;
     if (w && !w.hidden) return w;
 #pragma clang diagnostic pop
-    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+    for (UIWindow *w in UIApplication.sharedApplication.windows) {
         if (!w.hidden && w.rootViewController) return w;
     }
     return nil;
 }
 
-#pragma mark - Follow Manager
+#pragma mark - UDP Sync
 
-@interface YLTFollowManager : NSObject
-+ (instancetype)sharedManager;
-- (void)mergeAllAccounts;
-- (void)performFollowWithDelay:(CGFloat)delay;
-@end
+static void udpInit(void) {
+    udpFD = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udpFD < 0) return;
+    int opt = 1;
+    setsockopt(udpFD, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(udpFD, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
 
-@implementation YLTFollowManager
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(51551);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(udpFD, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(udpFD); udpFD = -1; return;
+    }
 
-+ (instancetype)sharedManager {
-    static YLTFollowManager *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{ instance = [[YLTFollowManager alloc] init]; });
-    return instance;
-}
-
-- (void)mergeAllAccounts {
-    accountsMerged = YES;
-    [self performFollowWithDelay:currentDelay];
-}
-
-- (void)performFollowWithDelay:(CGFloat)delay {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        for (NSInteger i = 0; i < accountNames.count; i++) {
-            for (NSInteger j = 0; j < accountNames.count; j++) {
-                if (i == j) continue;
-                [NSThread sleepForTimeInterval:delay];
+        char buf[256];
+        while (1) {
+            struct sockaddr_in from;
+            socklen_t flen = sizeof(from);
+            ssize_t n = recvfrom(udpFD, buf, sizeof(buf) - 1, 0, (struct sockaddr *)&from, &flen);
+            if (n > 0) {
+                buf[n] = '\0';
+                NSString *msg = [NSString stringWithUTF8String:buf];
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    NSLog(@"[YLTool] Following %@ -> %@", accountNames[i], accountNames[j]);
+                    if ([msg hasPrefix:@"POS:"]) {
+                        NSString *coords = [msg substringFromIndex:4];
+                        NSArray *parts = [coords componentsSeparatedByString:@","];
+                        if (parts.count == 2) {
+                            CGFloat x = [parts[0] floatValue];
+                            CGFloat y = [parts[1] floatValue];
+                            if (!isFirstInstance && circleView && circleView.superview) {
+                                circleView.center = CGPointMake(x, y);
+                            }
+                        }
+                    } else if ([msg hasPrefix:@"TAP"]) {
+                        if (!isFirstInstance && circleView) {
+                            [YLTapSync performLocalTap];
+                        }
+                    }
                 });
             }
         }
     });
+
+    // Broadcast our presence
+    const char *hello = "YLT:HELLO";
+    struct sockaddr_in bc;
+    memset(&bc, 0, sizeof(bc));
+    bc.sin_family = AF_INET;
+    bc.sin_port = htons(51551);
+    inet_aton("255.255.255.255", &bc.sin_addr);
+    sendto(udpFD, hello, strlen(hello), 0, (struct sockaddr *)&bc, sizeof(bc));
+}
+
+static void udpSend(NSString *msg) {
+    if (udpFD < 0) return;
+    const char *cmsg = [msg UTF8String];
+    struct sockaddr_in bc;
+    memset(&bc, 0, sizeof(bc));
+    bc.sin_family = AF_INET;
+    bc.sin_port = htons(51551);
+    inet_aton("255.255.255.255", &bc.sin_addr);
+    sendto(udpFD, cmsg, strlen(cmsg), 0, (struct sockaddr *)&bc, sizeof(bc));
+}
+
+#pragma mark - Tap Actions
+
+@interface YLTapSync : NSObject
++ (void)performLocalTap;
++ (void)startTapping;
++ (void)stopTapping;
+@end
+
+@implementation YLTapSync
+
++ (void)performLocalTap {
+    if (!circleView || !isRunning) return;
+
+    [UIView animateWithDuration:0.03 animations:^{
+        circleView.transform = CGAffineTransformMakeScale(0.8, 0.8);
+        circleView.backgroundColor = [UIColor colorWithRed:1.0 green:0.5 blue:0.2 alpha:0.95];
+    } completion:^(BOOL finished) {
+        [UIView animateWithDuration:0.03 animations:^{
+            circleView.transform = CGAffineTransformIdentity;
+            circleView.backgroundColor = [UIColor colorWithRed:0.95 green:0.25 blue:0.1 alpha:0.95];
+        }];
+    }];
+
+    UIWindow *w = activeWindow();
+    if (!w) return;
+
+    CGPoint pt = [circleView convertPoint:CGPointMake(30, 30) toView:w];
+    UIView *target = [w hitTest:pt withEvent:nil];
+    if (!target) return;
+    if (target == circleView || [target isDescendantOfView:panel] || [target isDescendantOfView:namesBar]) return;
+
+    if ([target isKindOfClass:[UIControl class]]) {
+        [(UIControl *)target sendActionsForControlEvents:UIControlEventTouchUpInside];
+    }
+
+    UIView *flash = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 16, 16)];
+    flash.center = pt;
+    flash.backgroundColor = [UIColor whiteColor];
+    flash.layer.cornerRadius = 8;
+    flash.alpha = 0.8;
+    flash.userInteractionEnabled = NO;
+    [w addSubview:flash];
+    [UIView animateWithDuration:0.25 animations:^{
+        flash.alpha = 0; flash.transform = CGAffineTransformMakeScale(2.5, 2.5);
+    } completion:^(BOOL f) { [flash removeFromSuperview]; }];
+
+    udpSend(@"TAP");
+}
+
++ (void)startTapping {
+    if (tapTimer) return;
+    CGFloat interval = tapDelay;
+    if (interval < 0.005) interval = 0.005;
+    tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, interval * NSEC_PER_SEC, 0);
+    dispatch_source_set_event_handler(tapTimer, ^{ [self performLocalTap]; });
+    dispatch_resume(tapTimer);
+}
+
++ (void)stopTapping {
+    if (tapTimer) { dispatch_source_cancel(tapTimer); tapTimer = NULL; }
 }
 
 @end
 
 #pragma mark - UI Setup
 
-@interface YLTUIHelper : NSObject
-+ (void)setupTweakUI;
-+ (void)showAlertWithTitle:(NSString *)title message:(NSString *)message;
+@interface YLTUI : NSObject
++ (void)setup;
 @end
 
-@implementation YLTUIHelper
+@implementation YLTUI
 
-+ (void)setupTweakUI {
-    UIWindow *keyWindow = keyWindowHelper();
-    if (!keyWindow) {
-        NSLog(@"[YLTool] No key window available, retrying in 1s...");
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self setupTweakUI];
++ (void)setup {
+    UIWindow *kw = activeWindow();
+    if (!kw) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self setup];
         });
         return;
     }
 
-    NSLog(@"[YLTool] Got key window: %@, setting up UI", keyWindow);
+    NSLog(@"[YLT] Setting up UI on %@", kw);
+    CGFloat sw = UIScreen.mainScreen.bounds.size.width;
 
-    CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
-    CGFloat cw = 280;
-    CGFloat cx = (screenWidth - cw) / 2;
-    CGFloat cy = 80;
-    CGFloat pad = 12;
-    CGFloat gap = 8;
+    // ---- Control Panel (small) ----
+    CGFloat pw = 220, ph = 160, px = 20, py = 40;
+    panel = [[UIView alloc] initWithFrame:CGRectMake(px, py, pw, ph)];
+    panel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.92];
+    panel.layer.cornerRadius = 16;
+    panel.layer.borderColor = [UIColor colorWithRed:0.2 green:0.5 blue:1.0 alpha:0.6].CGColor;
+    panel.layer.borderWidth = 1.5;
+    panel.layer.shadowColor = UIColor.blackColor.CGColor;
+    panel.layer.shadowOpacity = 0.5;
+    panel.layer.shadowOffset = CGSizeMake(0, 4);
+    panel.layer.shadowRadius = 12;
+    panel.clipsToBounds = NO;
+    panel.tag = 100;
 
-    // Calculate badge layout
-    CGFloat bX = pad;
-    CGFloat bY = pad + 2;
-    CGFloat bH = 28;
-    CGFloat bGapX = 6;
-    CGFloat bGapY = 6;
-    CGFloat bMaxX = cw - pad;
-    NSMutableArray *badgeLayout = [NSMutableArray array];
-    for (NSString *name in accountNames) {
-        CGSize ts = [name sizeWithAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightMedium]}];
-        CGFloat bw = ts.width + 16;
-        if (bw < 50) bw = 50;
-        if (bX + bw > bMaxX) { bX = pad; bY += bH + bGapY; }
-        [badgeLayout addObject:@{@"name": name, @"x": @(bX), @"y": @(bY), @"w": @(bw)}];
-        bX += bw + bGapX;
-    }
-    CGFloat namesBottom = bY + bH + 8;
+    CGFloat yy = 10;
 
-    // Container height
-    CGFloat toggleH = 42;
-    CGFloat sliderTitleH = 18;
-    CGFloat sliderH = 30;
-    CGFloat speedLabelH = 16;
-    CGFloat sepH = 1;
-    CGFloat mergeH = 42;
-    CGFloat ch = namesBottom + gap + sepH + gap + toggleH + gap +
-                 sliderTitleH + sliderH + speedLabelH + gap +
-                 sepH + gap + mergeH + pad;
-
-    mainContainer = [[UIView alloc] initWithFrame:CGRectMake(cx, cy, cw, ch)];
-    mainContainer.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.96];
-    mainContainer.layer.cornerRadius = 14;
-    mainContainer.layer.borderColor = [UIColor colorWithRed:0.0 green:0.6 blue:1.0 alpha:0.8].CGColor;
-    mainContainer.layer.borderWidth = 2;
-    mainContainer.clipsToBounds = YES;
-    mainContainer.tag = 100;
-
-    // Add badges
-    for (NSDictionary *item in badgeLayout) {
-        CGFloat x = [item[@"x"] floatValue];
-        CGFloat y = [item[@"y"] floatValue];
-        CGFloat w = [item[@"w"] floatValue];
-        UIView *badge = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, bH)];
-        badge.backgroundColor = [UIColor colorWithRed:0.15 green:0.4 blue:0.7 alpha:0.7];
-        badge.layer.cornerRadius = 6;
-        badge.layer.borderColor = [UIColor colorWithRed:0.3 green:0.6 blue:1.0 alpha:0.6].CGColor;
-        badge.layer.borderWidth = 1;
-        UILabel *bl = [[UILabel alloc] initWithFrame:badge.bounds];
-        bl.text = item[@"name"];
-        bl.textColor = [UIColor whiteColor];
-        bl.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
-        bl.textAlignment = NSTextAlignmentCenter;
-        [badge addSubview:bl];
-        [mainContainer addSubview:badge];
-    }
-
-    CGFloat yOff = namesBottom + gap;
-
-    // Separator 1
-    UIView *sep1 = [[UIView alloc] initWithFrame:CGRectMake(pad, yOff, cw - pad * 2, sepH)];
-    sep1.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.5];
-    [mainContainer addSubview:sep1];
-    yOff += sepH + gap;
-
-    // Toggle Button
+    // Toggle
     toggleBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    toggleBtn.frame = CGRectMake(20, yOff, cw - 40, toggleH);
-    toggleBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.75 blue:0.3 alpha:1.0];
+    toggleBtn.frame = CGRectMake(12, yy, pw - 24, 36);
+    toggleBtn.backgroundColor = [UIColor colorWithRed:0.15 green:0.7 blue:0.25 alpha:1];
     toggleBtn.layer.cornerRadius = 10;
-    [toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
-    [toggleBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    toggleBtn.titleLabel.font = [UIFont boldSystemFontOfSize:17];
-    [toggleBtn addTarget:self action:@selector(toggleRunStop) forControlEvents:UIControlEventTouchUpInside];
-    [mainContainer addSubview:toggleBtn];
-    yOff += toggleH + gap;
+    toggleBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    [toggleBtn setTitle:@"▶ تشغيل" forState:UIControlStateNormal];
+    [toggleBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    [toggleBtn addTarget:self action:@selector(tapToggle) forControlEvents:UIControlEventTouchUpInside];
+    [panel addSubview:toggleBtn];
+    yy += 42;
 
-    // Speed Slider
-    UILabel *sliderTitle = [[UILabel alloc] initWithFrame:CGRectMake(20, yOff, cw - 40, sliderTitleH)];
-    sliderTitle.text = @"سرعة MS";
-    sliderTitle.textColor = [UIColor lightGrayColor];
-    sliderTitle.font = [UIFont systemFontOfSize:13];
-    sliderTitle.textAlignment = NSTextAlignmentCenter;
-    [mainContainer addSubview:sliderTitle];
-    yOff += sliderTitleH;
-
-    speedSlider = [[UISlider alloc] initWithFrame:CGRectMake(20, yOff, cw - 40, sliderH)];
+    // Slider
+    speedSlider = [[UISlider alloc] initWithFrame:CGRectMake(12, yy, pw - 24, 24)];
     speedSlider.minimumValue = 0.0;
     speedSlider.maximumValue = 0.05;
     speedSlider.value = 0.0;
     speedSlider.continuous = YES;
-    speedSlider.minimumTrackTintColor = [UIColor colorWithRed:0.0 green:0.6 blue:1.0 alpha:1.0];
-    speedSlider.maximumTrackTintColor = [UIColor colorWithWhite:0.3 alpha:1.0];
-    [speedSlider addTarget:self action:@selector(speedChanged) forControlEvents:UIControlEventValueChanged];
-    [mainContainer addSubview:speedSlider];
-    yOff += sliderH;
+    speedSlider.minimumTrackTintColor = [UIColor colorWithRed:0.2 green:0.5 blue:1.0 alpha:1];
+    speedSlider.maximumTrackTintColor = [UIColor colorWithWhite:0.3 alpha:1];
+    [speedSlider addTarget:self action:@selector(speedChange) forControlEvents:UIControlEventValueChanged];
+    [panel addSubview:speedSlider];
+    yy += 26;
 
-    speedValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, yOff, cw - 40, speedLabelH)];
-    speedValueLabel.text = @"0.00 ثانية";
-    speedValueLabel.textColor = [UIColor colorWithRed:0.6 green:0.8 blue:1.0 alpha:1.0];
-    speedValueLabel.font = [UIFont systemFontOfSize:12];
-    speedValueLabel.textAlignment = NSTextAlignmentCenter;
-    [mainContainer addSubview:speedValueLabel];
-    yOff += speedLabelH + gap;
+    speedValLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, yy, pw - 24, 14)];
+    speedValLabel.text = @"0.00 ثانية";
+    speedValLabel.textColor = [UIColor colorWithRed:0.5 green:0.7 blue:1.0 alpha:1];
+    speedValLabel.font = [UIFont systemFontOfSize:10];
+    speedValLabel.textAlignment = NSTextAlignmentCenter;
+    [panel addSubview:speedValLabel];
+    yy += 20;
 
-    // Separator 2
-    UIView *sep2 = [[UIView alloc] initWithFrame:CGRectMake(pad, yOff, cw - pad * 2, sepH)];
-    sep2.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.5];
-    [mainContainer addSubview:sep2];
-    yOff += sepH + gap;
-
-    // Merge Button
-    mergeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    mergeBtn.frame = CGRectMake(20, yOff, cw - 40, mergeH);
-    mergeBtn.backgroundColor = [UIColor colorWithRed:0.9 green:0.45 blue:0.1 alpha:1.0];
-    mergeBtn.layer.cornerRadius = 10;
-    [mergeBtn setTitle:@"دمج الحسابات" forState:UIControlStateNormal];
-    [mergeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    mergeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:17];
-    [mergeBtn addTarget:self action:@selector(mergeAccounts) forControlEvents:UIControlEventTouchUpInside];
-    [mainContainer addSubview:mergeBtn];
-
-    // Hide Button
+    // Hide button
     UIButton *hideBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    hideBtn.frame = CGRectMake(cw - 38, 6, 28, 28);
+    hideBtn.frame = CGRectMake(pw - 34, 6, 24, 24);
     hideBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.8];
-    hideBtn.layer.cornerRadius = 14;
+    hideBtn.layer.cornerRadius = 12;
+    hideBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [hideBtn setTitle:@"−" forState:UIControlStateNormal];
-    [hideBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    hideBtn.titleLabel.font = [UIFont boldSystemFontOfSize:18];
-    [hideBtn addTarget:self action:@selector(hidePanel) forControlEvents:UIControlEventTouchUpInside];
-    [mainContainer addSubview:hideBtn];
+    [hideBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    [hideBtn addTarget:self action:@selector(tapHide) forControlEvents:UIControlEventTouchUpInside];
+    [panel addSubview:hideBtn];
 
-    // Minimized Container
-    CGFloat mcw = 80;
-    CGFloat mch = 80;
-    minimizedContainer = [[UIView alloc] initWithFrame:CGRectMake(cx + cw - mcw, cy, mcw, mch)];
-    minimizedContainer.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.96];
-    minimizedContainer.layer.cornerRadius = 14;
-    minimizedContainer.layer.borderColor = [UIColor colorWithRed:0.0 green:0.6 blue:1.0 alpha:0.8].CGColor;
-    minimizedContainer.layer.borderWidth = 2;
-    minimizedContainer.hidden = YES;
-    minimizedContainer.tag = 200;
+    [kw addSubview:panel];
 
-    UIButton *arrowBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    arrowBtn.frame = CGRectMake(10, 10, 60, 60);
-    arrowBtn.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.9];
-    arrowBtn.layer.cornerRadius = 30;
-    [arrowBtn setTitle:@"▶" forState:UIControlStateNormal];
-    [arrowBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.6 blue:1.0 alpha:1.0] forState:UIControlStateNormal];
-    arrowBtn.titleLabel.font = [UIFont boldSystemFontOfSize:22];
-    [arrowBtn addTarget:self action:@selector(showPanel) forControlEvents:UIControlEventTouchUpInside];
-    [minimizedContainer addSubview:arrowBtn];
+    // ---- Names Strip (movable, horizontal) ----
+    CGFloat nbW = sw - 40, nbH = 36, nbX = 20, nbY = py + ph + 12;
+    namesBar = [[UIView alloc] initWithFrame:CGRectMake(nbX, nbY, nbW, nbH)];
+    namesBar.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.9];
+    namesBar.layer.cornerRadius = 18;
+    namesBar.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:0.5].CGColor;
+    namesBar.layer.borderWidth = 1;
+    namesBar.clipsToBounds = YES;
+    namesBar.tag = 400;
 
-    // Draggable Circle
-    CGFloat circleSize = 60;
-    CGFloat circleX = (screenWidth - circleSize) / 2;
-    CGFloat circleY = cy + ch + 30;
-    circleView = [[UIView alloc] initWithFrame:CGRectMake(circleX, circleY, circleSize, circleSize)];
-    circleView.backgroundColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.1 alpha:0.9];
-    circleView.layer.cornerRadius = circleSize / 2;
-    circleView.layer.borderColor = [UIColor whiteColor].CGColor;
-    circleView.layer.borderWidth = 2;
+    UIScrollView *sc = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, nbW, nbH)];
+    sc.showsHorizontalScrollIndicator = NO;
+    sc.tag = 500;
+
+    CGFloat sx = 12;
+    CGFloat sh = 26;
+    CGFloat sy = (nbH - sh) / 2;
+    for (NSString *name in names) {
+        CGSize ts = [name sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:11 weight:UIFontWeightSemibold]}];
+        CGFloat sw2 = ts.width + 20;
+        UIView *badge = [[UIView alloc] initWithFrame:CGRectMake(sx, sy, sw2, sh)];
+        badge.backgroundColor = [UIColor colorWithRed:0.12 green:0.35 blue:0.65 alpha:0.8];
+        badge.layer.cornerRadius = 8;
+        badge.layer.borderColor = [UIColor colorWithRed:0.3 green:0.6 blue:1.0 alpha:0.4].CGColor;
+        badge.layer.borderWidth = 1;
+
+        UILabel *lb = [[UILabel alloc] initWithFrame:badge.bounds];
+        lb.text = name;
+        lb.textColor = UIColor.whiteColor;
+        lb.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
+        lb.textAlignment = NSTextAlignmentCenter;
+        [badge addSubview:lb];
+        [sc addSubview:badge];
+        sx += sw2 + 6;
+    }
+    sc.contentSize = CGSizeMake(sx, nbH);
+    [namesBar addSubview:sc];
+
+    // Drag gesture for names bar
+    UIPanGestureRecognizer *np = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragView:)];
+    [namesBar addGestureRecognizer:np];
+
+    [kw addSubview:namesBar];
+
+    // ---- Tapping Circle ----
+    CGFloat cs = 56, cx2 = (sw - cs) / 2, cy2 = nbY + nbH + 30;
+    circleView = [[UIView alloc] initWithFrame:CGRectMake(cx2, cy2, cs, cs)];
+    circleView.backgroundColor = [UIColor colorWithRed:0.95 green:0.25 blue:0.1 alpha:0.95];
+    circleView.layer.cornerRadius = cs / 2;
+    circleView.layer.borderColor = UIColor.whiteColor.CGColor;
+    circleView.layer.borderWidth = 2.5;
+    circleView.layer.shadowColor = UIColor.redColor.CGColor;
+    circleView.layer.shadowOpacity = 0.6;
+    circleView.layer.shadowOffset = CGSizeMake(0, 0);
+    circleView.layer.shadowRadius = 10;
     circleView.userInteractionEnabled = YES;
     circleView.tag = 300;
 
-    circleLabel = [[UILabel alloc] initWithFrame:circleView.bounds];
-    circleLabel.text = @"515";
-    circleLabel.textColor = [UIColor whiteColor];
-    circleLabel.font = [UIFont boldSystemFontOfSize:18];
-    circleLabel.textAlignment = NSTextAlignmentCenter;
-    [circleView addSubview:circleLabel];
+    UILabel *cl = [[UILabel alloc] initWithFrame:circleView.bounds];
+    cl.text = @"515";
+    cl.textColor = UIColor.whiteColor;
+    cl.font = [UIFont boldSystemFontOfSize:16];
+    cl.textAlignment = NSTextAlignmentCenter;
+    [circleView addSubview:cl];
 
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[YLTUIHelper class] action:@selector(dragCircle:)];
-    [circleView addGestureRecognizer:pan];
+    UIPanGestureRecognizer *cp = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragCircle:)];
+    [circleView addGestureRecognizer:cp];
 
-    // Add ALL views to the key window
-    [keyWindow addSubview:mainContainer];
-    [keyWindow addSubview:minimizedContainer];
-    [keyWindow addSubview:circleView];
+    // Long press to set as main
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(setMain:)];
+    lp.minimumPressDuration = 1.0;
+    [circleView addGestureRecognizer:lp];
 
-    NSLog(@"[YLTool] UI setup complete - added to window: %@", keyWindow);
+    [kw addSubview:circleView];
+
+    // ---- Minimized Panel ----
+    CGFloat mw = 70, mh = 70;
+    minimizedPanel = [[UIView alloc] initWithFrame:CGRectMake(sw - mw - 10, 60, mw, mh)];
+    minimizedPanel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.92];
+    minimizedPanel.layer.cornerRadius = 16;
+    minimizedPanel.layer.borderColor = [UIColor colorWithRed:0.2 green:0.5 blue:1.0 alpha:0.6].CGColor;
+    minimizedPanel.layer.borderWidth = 1.5;
+    minimizedPanel.hidden = YES;
+    minimizedPanel.tag = 200;
+
+    UIButton *ab = [UIButton buttonWithType:UIButtonTypeSystem];
+    ab.frame = CGRectMake(10, 10, 50, 50);
+    ab.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.9];
+    ab.layer.cornerRadius = 25;
+    ab.titleLabel.font = [UIFont boldSystemFontOfSize:20];
+    [ab setTitle:@"▶" forState:UIControlStateNormal];
+    [ab setTitleColor:[UIColor colorWithRed:0.2 green:0.5 blue:1.0 alpha:1] forState:UIControlStateNormal];
+    [ab addTarget:self action:@selector(tapShow) forControlEvents:UIControlEventTouchUpInside];
+    [minimizedPanel addSubview:ab];
+
+    [kw addSubview:minimizedPanel];
+
+    // Init UDP
+    udpInit();
+
+    NSLog(@"[YLT] UI setup complete");
 }
 
-#pragma mark - Circle Drag
+#pragma mark - Actions
 
-+ (void)dragCircle:(UIPanGestureRecognizer *)gesture {
-    UIView *view = gesture.view;
-    CGPoint translation = [gesture translationInView:view.superview];
-    CGPoint center = view.center;
-    center.x += translation.x;
-    center.y += translation.y;
-    view.center = center;
-    [gesture setTranslation:CGPointZero inView:view.superview];
-}
-
-#pragma mark - Tapping Logic
-
-+ (void)startTapping {
-    if (tapTimer) return;
-    CGFloat interval = currentDelay;
-    if (interval < 0.005) interval = 0.005;
-    tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, interval * NSEC_PER_SEC, 0);
-    dispatch_source_set_event_handler(tapTimer, ^{ [self performTap]; });
-    dispatch_resume(tapTimer);
-    NSLog(@"[YLTool] Tapping started at interval: %.3f", interval);
-}
-
-+ (void)stopTapping {
-    if (tapTimer) {
-        dispatch_source_cancel(tapTimer);
-        tapTimer = NULL;
-        NSLog(@"[YLTool] Tapping stopped");
-    }
-}
-
-+ (void)performTap {
-    if (!circleView || !isRunning) return;
-
-    [UIView animateWithDuration:0.03 animations:^{
-        circleView.transform = CGAffineTransformMakeScale(0.8, 0.8);
-        circleView.backgroundColor = [UIColor colorWithRed:1.0 green:0.5 blue:0.2 alpha:0.9];
-    } completion:^(BOOL finished) {
-        [UIView animateWithDuration:0.03 animations:^{
-            circleView.transform = CGAffineTransformIdentity;
-            circleView.backgroundColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.1 alpha:0.9];
-        }];
-    }];
-
-    UIWindow *keyWindow = keyWindowHelper();
-    if (!keyWindow) return;
-
-    CGPoint tapPoint = [circleView convertPoint:circleView.center toView:keyWindow];
-    UIView *targetView = [keyWindow hitTest:tapPoint withEvent:nil];
-    if (!targetView) return;
-    if (targetView == circleView || [targetView isDescendantOfView:mainContainer] || [targetView isDescendantOfView:minimizedContainer]) return;
-
-    if ([targetView isKindOfClass:[UIControl class]]) {
-        UIControl *control = (UIControl *)targetView;
-        [control sendActionsForControlEvents:UIControlEventTouchUpInside];
-    }
-
-    UIView *flash = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 20, 20)];
-    flash.center = tapPoint;
-    flash.backgroundColor = [UIColor whiteColor];
-    flash.layer.cornerRadius = 10;
-    flash.alpha = 0.7;
-    flash.userInteractionEnabled = NO;
-    [keyWindow addSubview:flash];
-    [UIView animateWithDuration:0.2 animations:^{
-        flash.alpha = 0;
-        flash.transform = CGAffineTransformMakeScale(2, 2);
-    } completion:^(BOOL finished) { [flash removeFromSuperview]; }];
-}
-
-#pragma mark - Toggle Run/Stop
-
-+ (void)toggleRunStop {
++ (void)tapToggle {
     isRunning = !isRunning;
     if (isRunning) {
-        toggleBtn.backgroundColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1.0];
-        [toggleBtn setTitle:@"إيقاف" forState:UIControlStateNormal];
-        [self startTapping];
+        toggleBtn.backgroundColor = [UIColor colorWithRed:0.8 green:0.15 blue:0.15 alpha:1];
+        [toggleBtn setTitle:@"■ إيقاف" forState:UIControlStateNormal];
+        [YLTapSync startTapping];
     } else {
-        toggleBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.75 blue:0.3 alpha:1.0];
-        [toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
-        [self stopTapping];
+        toggleBtn.backgroundColor = [UIColor colorWithRed:0.15 green:0.7 blue:0.25 alpha:1];
+        [toggleBtn setTitle:@"▶ تشغيل" forState:UIControlStateNormal];
+        [YLTapSync stopTapping];
     }
 }
 
-#pragma mark - Speed Slider
-
-+ (void)speedChanged {
-    CGFloat val = speedSlider.value;
-    val = round(val * 100.0) / 100.0;
-    speedSlider.value = val;
-    currentDelay = val;
-    speedValueLabel.text = [NSString stringWithFormat:@"%.2f ثانية", val];
-    if (isRunning) { [self stopTapping]; [self startTapping]; }
++ (void)speedChange {
+    CGFloat v = round(speedSlider.value * 100) / 100;
+    speedSlider.value = v;
+    tapDelay = v;
+    speedValLabel.text = [NSString stringWithFormat:@"%.2f ثانية", v];
+    if (isRunning) { [YLTapSync stopTapping]; [YLTapSync startTapping]; }
 }
 
-#pragma mark - Merge Accounts
-
-+ (void)mergeAccounts {
-    [[YLTFollowManager sharedManager] mergeAllAccounts];
-    [self showAlertWithTitle:@"✓ تم الدمج" message:@"تم ربط جميع الحسابات بنجاح"];
-
-    mergeBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.6 blue:0.3 alpha:1.0];
-    [mergeBtn setTitle:@"✓ تم الربط" forState:UIControlStateNormal];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        mergeBtn.backgroundColor = [UIColor colorWithRed:0.9 green:0.45 blue:0.1 alpha:1.0];
-        [mergeBtn setTitle:@"دمج الحسابات" forState:UIControlStateNormal];
-    });
++ (void)tapHide {
+    panel.hidden = YES;
+    minimizedPanel.hidden = NO;
 }
 
-#pragma mark - Hide / Show
-
-+ (void)hidePanel {
-    isExpanded = NO;
-    mainContainer.hidden = YES;
-    minimizedContainer.hidden = NO;
++ (void)tapShow {
+    minimizedPanel.hidden = YES;
+    panel.hidden = NO;
 }
 
-+ (void)showPanel {
-    isExpanded = YES;
-    minimizedContainer.hidden = YES;
-    mainContainer.hidden = NO;
++ (void)dragView:(UIPanGestureRecognizer *)g {
+    UIView *v = g.view;
+    CGPoint t = [g translationInView:v.superview];
+    v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
+    [g setTranslation:CGPointZero inView:v.superview];
 }
 
-#pragma mark - Alert Helper
++ (void)dragCircle:(UIPanGestureRecognizer *)g {
+    UIView *v = g.view;
+    CGPoint t = [g translationInView:v.superview];
+    v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
+    [g setTranslation:CGPointZero inView:v.superview];
 
-+ (void)showAlertWithTitle:(NSString *)title message:(NSString *)message {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-    UIWindow *keyWindow = keyWindowHelper();
-    UIViewController *rootVC = keyWindow.rootViewController;
-    if (rootVC) {
-        [rootVC presentViewController:alert animated:YES completion:nil];
+    if (g.state == UIGestureRecognizerStateEnded) {
+        // Broadcast position to all connected instances
+        NSString *pos = [NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y];
+        udpSend(pos);
     }
+}
+
++ (void)setMain:(UILongPressGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateBegan) {
+        isFirstInstance = YES;
+        circleView.layer.borderColor = [UIColor yellowColor].CGColor;
+        circleView.layer.borderWidth = 3;
+        [YLTUI showAlert:@"✓ رئيسي" msg:@"هذه النسخة هي الرئيسية"];
+    }
+}
+
+#pragma mark - Alert
+
++ (void)showAlert:(NSString *)title msg:(NSString *)msg {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:msg preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    UIViewController *rvc = activeWindow().rootViewController;
+    if (rvc) [rvc presentViewController:a animated:YES completion:nil];
 }
 
 @end
 
 #pragma mark - Constructor
 
-static void initializeTweak(void) {
-    NSLog(@"[YLTool] Constructor called, setting up observers...");
-    // Try immediately
+__attribute__((constructor)) static void init(void) {
+    NSLog(@"[YLT] Constructor called");
     dispatch_async(dispatch_get_main_queue(), ^{
-        [YLTUIHelper setupTweakUI];
+        [YLTUI setup];
     });
-    // Also observe for new windows (covers late window creation)
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
-        UIWindow *w = note.object;
-        if (w && !w.hidden && [w isKindOfClass:[UIWindow class]] && w.rootViewController) {
-            static dispatch_once_t once;
-            dispatch_once(&once, ^{
-                NSLog(@"[YLTool] Window became visible, setting up UI...");
-                [YLTUIHelper setupTweakUI];
-            });
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        UIWindow *w = n.object;
+        if (w && !w.hidden && w.rootViewController && !panel) {
+            NSLog(@"[YLT] Window visible, setting up");
+            [YLTUI setup];
         }
     }];
 }
-
-%ctor {
-    initializeTweak();
-}
-
-#pragma mark - YallaLite Hooks (Placeholder)
-
-// Uncomment and replace with actual YallaLite classes/methods from class-dump:
-/*
-%hook YLLFollowManager
-- (void)followUser:(NSString *)userId {
-    %orig;
-    NSLog(@"[YLTool] followUser hooked: %@", userId);
-}
-- (void)unfollowUser:(NSString *)userId {
-    %orig;
-    NSLog(@"[YLTool] unfollowUser hooked: %@", userId);
-}
-%end
-*/
-
-/*
-%hook YLLNetworkManager
-- (void)sendFollowRequestWithUserId:(NSString *)userId completion:(void(^)(BOOL))completion {
-    %orig;
-    if (accountsMerged) {
-        NSLog(@"[YLTool] Auto-follow active for: %@", userId);
-    }
-}
-%end
-*/
