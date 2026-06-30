@@ -86,7 +86,18 @@ static void stopBgTask(void) {
 
 #pragma mark - Forward Declarations
 
-@class Tapper, Controller;
+@interface Tapper : NSObject
++ (void)doTap;
++ (void)doTapLocal;
++ (void)start;
++ (void)stop;
+@end
+
+@interface Controller : NSObject
++ (void)buildUI;
++ (void)updateRunUI;
++ (void)updateMergeUI;
+@end
 
 #pragma mark - Darwin IPC
 
@@ -197,13 +208,6 @@ static void sendAll(NSString *msg) {
 
 #pragma mark - Tap Engine
 
-@interface Tapper : NSObject
-+ (void)doTap;
-+ (void)doTapLocal;
-+ (void)start;
-+ (void)stop;
-@end
-
 @implementation Tapper
 
 + (void)doTapLocal {
@@ -271,12 +275,6 @@ static void sendAll(NSString *msg) {
 @end
 
 #pragma mark - UI Setup
-
-@interface Controller : NSObject
-+ (void)buildUI;
-+ (void)updateRunUI;
-+ (void)updateMergeUI;
-@end
 
 @implementation Controller
 
