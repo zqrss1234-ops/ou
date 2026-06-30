@@ -21,6 +21,7 @@ static UISlider *delaySlider = nil;
 static UILabel *delayLabel = nil;
 static UIButton *runBtn = nil;
 static UIButton *mergeBtn = nil;
+static UIView *mergeDot = nil;
 static dispatch_source_t tapTimer = NULL;
 static dispatch_source_t topTimer = NULL;
 static dispatch_source_t rainbowTimer = NULL;
@@ -29,7 +30,6 @@ static CAGradientLayer *accentLine = nil;
 static BOOL running = NO;
 static BOOL isMain = YES;
 static CGFloat currentDelay = 200.0;
-static int udpSock = -1;
 
 #pragma mark - Helpers
 
@@ -62,7 +62,7 @@ static void ensureOnTop(void) {
     }
 }
 
-#pragma mark - Darwin IPC (same device)
+#pragma mark - Darwin IPC
 
 static int darwinPosToken = 0;
 static int darwinRunToken = 0;
@@ -100,7 +100,9 @@ static void darwinPost(const char *name) {
     notify_post(name);
 }
 
-#pragma mark - UDP IPC (cross device)
+#pragma mark - UDP IPC (dispatch recvfrom – proven stable)
+
+static int udpSock = -1;
 
 static void udpInit(void) {
     udpSock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -271,7 +273,7 @@ static void sendAll(NSString *msg) {
         marqueeTxt = [marqueeTxt stringByAppendingFormat:@"  ◉  %@", n];
     }
 
-    // ---- Premium Control Box ----
+    // ---- Control Box ----
     CGFloat bw = 236, bh = 218, bx = (sw-bw)/2, by = sh * 0.10;
     ctrlBox = [[UIView alloc] initWithFrame:CGRectMake(bx, by, bw, bh)];
     ctrlBox.backgroundColor = rgba(8, 8, 16, 0.92);
@@ -302,7 +304,7 @@ static void sendAll(NSString *msg) {
 
     CGFloat yy = 10;
 
-    // ---- Marquee Names (GCD timer) ----
+    // ---- Marquee ----
     UIView *marqueeBox = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 34)];
     marqueeBox.backgroundColor = rgba(12, 12, 24, 0.5);
     marqueeBox.layer.cornerRadius = 17;
@@ -362,7 +364,7 @@ static void sendAll(NSString *msg) {
     [ctrlBox addSubview:delaySlider];
     yy += 26;
 
-    // ---- Run/Hide Row ----
+    // ---- Run/Hide ----
     runBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     runBtn.frame = CGRectMake(10, yy, (bw-26)*0.60, 38);
     runBtn.backgroundColor = rgba(40, 100, 230, 1);
@@ -384,14 +386,14 @@ static void sendAll(NSString *msg) {
     [ctrlBox addSubview:hideBtn];
     yy += 44;
 
-    // ---- Merge Row ----
+    // ---- Merge ----
     UIView *mergeRow = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 32)];
     mergeRow.backgroundColor = rgba(12, 12, 24, 0.45);
     mergeRow.layer.cornerRadius = 16;
     mergeRow.layer.borderColor = rgba(60, 200, 100, 0.12).CGColor;
     mergeRow.layer.borderWidth = 0.5;
 
-    UIView *mergeDot = [[UIView alloc] initWithFrame:CGRectMake(10, 11, 10, 10)];
+    mergeDot = [[UIView alloc] initWithFrame:CGRectMake(10, 11, 10, 10)];
     mergeDot.layer.cornerRadius = 5;
     mergeDot.userInteractionEnabled = NO;
     mergeDot.backgroundColor = rgba(120, 130, 160, 0.3);
@@ -619,7 +621,7 @@ static void sendAll(NSString *msg) {
 
 __attribute__((constructor)) static void init() {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    if (![bid hasPrefix:@"com.yalla.yallalite"]) return;
+    if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
     NSLog(@"[YLT] Loading...");
     dispatch_async(dispatch_get_main_queue(), ^{ [Controller buildUI]; });
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
