@@ -5,7 +5,7 @@
 
 #pragma mark - Names
 
-static NSArray<NSString *> *names = @[
+static NSArray<NSString *> *accountNames = @[
     @"Abdulilah", @"Lahhou", @"Charo", @"Said",
     @"AbuMeteab", @"Nasser", @"Alkaed",
     @"Alhbas", @"Alshamara"
@@ -13,518 +13,438 @@ static NSArray<NSString *> *names = @[
 
 #pragma mark - State
 
-static UIView *panel = nil;
-static UIView *minimizedPanel = nil;
-static UIView *namesBar = nil;
-static UIView *circleView = nil;
-static UIButton *toggleBtn = nil;
-static UISlider *speedSlider = nil;
-static UILabel *speedValLabel = nil;
+static UIView *controlPanel = nil;
+static UIView *miniPanel = nil;
+static UIView *namesStrip = nil;
+static UIView *tapCircle = nil;
+static UIButton *runBtn = nil;
+static UISlider *delaySlider = nil;
+static UILabel *delayLabel = nil;
 static dispatch_source_t tapTimer = NULL;
-static BOOL isRunning = NO;
-static CGFloat tapDelay = 0.0;
-static int udpFD = -1;
-static BOOL isFirstInstance = NO;
+static BOOL running = NO;
+static BOOL isMain = NO;
+static CGFloat currentDelay = 0.0;
+static int udpSock = -1;
 
-#pragma mark - Window Helper
+#pragma mark - Helpers
 
-static UIWindow *activeWindow(void) {
-    if (@available(iOS 13.0, *)) {
-        for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
-            if ([s isKindOfClass:[UIWindowScene class]] && s.activationState == UISceneActivationStateForegroundActive) {
-                UIWindow *w = [(UIWindowScene *)s windows].firstObject;
-                if (w && !w.hidden) return w;
-            }
-        }
-    }
+static UIWindow *appWindow(void) {
+    if (@available(iOS 13.0, *))
+        for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
+            if ([s isKindOfClass:[UIWindowScene class]] && s.activationState == UISceneActivationStateForegroundActive)
+                { UIWindow *w = [(UIWindowScene *)s windows].firstObject; if (w && !w.hidden) return w; }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     UIWindow *w = UIApplication.sharedApplication.keyWindow;
     if (w && !w.hidden) return w;
 #pragma clang diagnostic pop
-    for (UIWindow *w in UIApplication.sharedApplication.windows) {
+    for (UIWindow *w in UIApplication.sharedApplication.windows)
         if (!w.hidden && w.rootViewController) return w;
-    }
     return nil;
 }
 
-#pragma mark - Forward Declarations
-
-@class YLTapSync;
-static void udpInit(void);
-static void udpSend(NSString *msg);
-
-#pragma mark - Tap Actions
-
-@interface YLTapSync : NSObject
-+ (void)performLocalTap;
-+ (void)startTapping;
-+ (void)stopTapping;
-@end
-
-@implementation YLTapSync
-
-+ (void)simulateRealPressOnView:(UIView *)view atPoint:(CGPoint)point {
-    Class touchClass = NSClassFromString(@"UITouch");
-    if (!touchClass) return;
-
-    id touch = [[touchClass alloc] init];
-    NSDate *now = [NSDate date];
-    [touch setValue:@(UITouchPhaseBegan) forKey:@"_phase"];
-    [touch setValue:[NSValue valueWithCGPoint:point] forKey:@"_locationInWindow"];
-    [touch setValue:[NSValue valueWithCGPoint:point] forKey:@"_previousLocationInWindow"];
-    [touch setValue:now forKey:@"_timestamp"];
-    [touch setValue:@(0) forKey:@"_tapCount"];
-    [touch setValue:view.window forKey:@"_window"];
-    [touch setValue:@(UITouchTypeDirect) forKey:@"_type"];
-    [touch setValue:@(0) forKey:@"_radius"];
-    [touch setValue:view forKey:@"_view"];
-    [touch setValue:@(0) forKey:@"_gestureView"];
-    [touch setValue:@(0) forKey:@"_phase"];
-    [touch setValue:@(1) forKey:@"_touchFlags"];
-    [touch setValue:@(1) forKey:@"_edgeFlags"];
-
-    NSSet *touchSet = [[NSSet alloc] initWithObjects:&touch count:1];
-
-    // Phase 1: Began
-    [touch setValue:@(UITouchPhaseBegan) forKey:@"_phase"];
-    UIEvent *event = [self eventWithTouch:touch];
-    [view touchesBegan:touchSet withEvent:event];
-
-    // Phase 2: Ended (after short delay)
-    [touch setValue:@(UITouchPhaseEnded) forKey:@"_phase"];
-    [touch setValue:now forKey:@"_timestamp"];
-    event = [self eventWithTouch:touch];
-    [view touchesEnded:touchSet withEvent:event];
+static UIColor *color(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
+    return [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:a];
 }
 
-+ (UIEvent *)eventWithTouch:(id)touch {
-    Class eventClass = NSClassFromString(@"UIEvent");
-    id event = [[eventClass alloc] init];
-    [event setValue:@(UIEventTypeTouches) forKey:@"_type"];
-    [event setValue:@(UIEventSubtypeNone) forKey:@"_subtype"];
-    [event setValue:[NSDate date] forKey:@"_timestamp"];
-    [event setValue:touch forKey:@"_touch"];
-    return event;
+static UIView *makeBlur(CGFloat r) {
+    UIView *v = [[UIView alloc] init];
+    v.backgroundColor = [UIColor clearColor];
+    UIBlurEffect *be = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+    UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:be];
+    blur.frame = v.bounds;
+    blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    blur.layer.cornerRadius = r;
+    blur.clipsToBounds = YES;
+    [v addSubview:blur];
+    return v;
 }
 
-+ (UIView *)viewUnderCircle {
-    if (!circleView || !circleView.superview) return nil;
-
-    // Temporarily hide our overlay to find real views below
-    BOOL panelHidden = panel.hidden;
-    BOOL namesHidden = namesBar.hidden;
-    BOOL circleHidden = circleView.hidden;
-    panel.hidden = YES;
-    namesBar.hidden = YES;
-    circleView.hidden = YES;
-
-    UIWindow *w = activeWindow();
-    UIView *target = nil;
-    CGPoint pt = CGPointZero;
-    if (w) {
-        pt = [circleView convertPoint:CGPointMake(CGRectGetMidX(circleView.bounds), CGRectGetMidY(circleView.bounds)) toView:w];
-        target = [w hitTest:pt withEvent:nil];
-    }
-
-    // Restore visibility
-    panel.hidden = panelHidden;
-    namesBar.hidden = namesHidden;
-    circleView.hidden = circleHidden;
-
-    return target;
-}
-
-+ (void)performLocalTap {
-    if (!circleView || !isRunning) return;
-
-    [UIView animateWithDuration:0.02 animations:^{
-        circleView.transform = CGAffineTransformMakeScale(0.85, 0.85);
-        circleView.backgroundColor = [UIColor colorWithRed:1.0 green:0.5 blue:0.2 alpha:0.95];
-    } completion:^(BOOL finished) {
-        [UIView animateWithDuration:0.02 animations:^{
-            circleView.transform = CGAffineTransformIdentity;
-            circleView.backgroundColor = [UIColor colorWithRed:0.95 green:0.25 blue:0.1 alpha:0.95];
-        }];
-    }];
-
-    UIView *target = [self viewUnderCircle];
-    if (!target) return;
-
-    UIWindow *w = activeWindow();
-    CGPoint pt = [circleView convertPoint:CGPointMake(CGRectGetMidX(circleView.bounds), CGRectGetMidY(circleView.bounds)) toView:w];
-    CGPoint localPt = [w convertPoint:pt toView:target];
-
-    // Real press simulation (works on any view, inside rooms, on any button)
-    [self simulateRealPressOnView:target atPoint:localPt];
-
-    // Flash feedback
-    UIView *flash = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 14, 14)];
-    flash.center = pt;
-    flash.backgroundColor = [UIColor colorWithRed:0.3 green:0.8 blue:1.0 alpha:0.9];
-    flash.layer.cornerRadius = 7;
-    flash.userInteractionEnabled = NO;
-    [w addSubview:flash];
-    [UIView animateWithDuration:0.3 animations:^{
-        flash.alpha = 0; flash.transform = CGAffineTransformMakeScale(3, 3);
-    } completion:^(BOOL f) { [flash removeFromSuperview]; }];
-
-    udpSend(@"TAP");
-}
-
-+ (void)startTapping {
-    if (tapTimer) return;
-    CGFloat interval = tapDelay;
-    if (interval < 0.005) interval = 0.005;
-    tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, interval * NSEC_PER_SEC, 0);
-    dispatch_source_set_event_handler(tapTimer, ^{ [self performLocalTap]; });
-    dispatch_resume(tapTimer);
-}
-
-+ (void)stopTapping {
-    if (tapTimer) { dispatch_source_cancel(tapTimer); tapTimer = NULL; }
-}
-
-@end
-
-#pragma mark - UDP Sync Implementation
+#pragma mark - UDP
 
 static void udpInit(void) {
-    udpFD = socket(AF_INET, SOCK_DGRAM, 0);
-    if (udpFD < 0) return;
+    udpSock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udpSock < 0) return;
     int opt = 1;
-    setsockopt(udpFD, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    setsockopt(udpFD, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
+    setsockopt(udpSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(udpSock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
+    struct timeval tv = { .tv_sec = 0, .tv_usec = 100000 };
+    setsockopt(udpSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(51551);
     addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(udpFD, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(udpFD); udpFD = -1; return;
-    }
+    if (bind(udpSock, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(udpSock); udpSock = -1; return; }
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         char buf[256];
         while (1) {
             struct sockaddr_in from;
             socklen_t flen = sizeof(from);
-            ssize_t n = recvfrom(udpFD, buf, sizeof(buf) - 1, 0, (struct sockaddr *)&from, &flen);
+            ssize_t n = recvfrom(udpSock, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
             if (n > 0) {
-                buf[n] = '\0';
-                NSString *msg = [NSString stringWithUTF8String:buf];
+                buf[n] = 0;
+                NSString *m = [NSString stringWithUTF8String:buf];
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    if ([msg hasPrefix:@"POS:"]) {
-                        NSString *coords = [msg substringFromIndex:4];
-                        NSArray *parts = [coords componentsSeparatedByString:@","];
-                        if (parts.count == 2) {
-                            CGFloat x = [parts[0] floatValue];
-                            CGFloat y = [parts[1] floatValue];
-                            if (!isFirstInstance && circleView && circleView.superview) {
-                                circleView.center = CGPointMake(x, y);
-                            }
-                        }
-                    } else if ([msg hasPrefix:@"TAP"]) {
-                        if (!isFirstInstance && circleView) {
-                            [NSClassFromString(@"YLTapSync") performSelector:@selector(performLocalTap)];
-                        }
+                    if ([m hasPrefix:@"POS:"]) {
+                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
+                        if (p.count == 2 && !isMain && tapCircle && tapCircle.superview)
+                            tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                    } else if ([m isEqualToString:@"TAP"]) {
+                        if (!isMain) [self doTap];
                     }
                 });
             }
         }
     });
+}
 
-    const char *hello = "YLT:HELLO";
+static void udpSend(NSString *m) {
+    if (udpSock < 0) return;
     struct sockaddr_in bc;
     memset(&bc, 0, sizeof(bc));
     bc.sin_family = AF_INET;
     bc.sin_port = htons(51551);
     inet_aton("255.255.255.255", &bc.sin_addr);
-    sendto(udpFD, hello, strlen(hello), 0, (struct sockaddr *)&bc, sizeof(bc));
+    sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&bc, sizeof(bc));
 }
 
-static void udpSend(NSString *msg) {
-    if (udpFD < 0) return;
-    const char *cmsg = [msg UTF8String];
-    struct sockaddr_in bc;
-    memset(&bc, 0, sizeof(bc));
-    bc.sin_family = AF_INET;
-    bc.sin_port = htons(51551);
-    inet_aton("255.255.255.255", &bc.sin_addr);
-    sendto(udpFD, cmsg, strlen(cmsg), 0, (struct sockaddr *)&bc, sizeof(bc));
+#pragma mark - Tap Engine
+
+@interface Tapper : NSObject
++ (void)fireTap;
++ (void)start;
++ (void)stop;
+@end
+
+@implementation Tapper
+
++ (void)fireTap {
+    if (!tapCircle || !running) return;
+
+    [UIView animateWithDuration:0.02 animations:^{
+        tapCircle.transform = CGAffineTransformMakeScale(0.82, 0.82);
+        tapCircle.backgroundColor = color(255, 200, 50, 0.95);
+    } completion:^(BOOL f) {
+        [UIView animateWithDuration:0.02 animations:^{
+            tapCircle.transform = CGAffineTransformIdentity;
+            tapCircle.backgroundColor = isMain ? color(255, 69, 58, 0.95) : color(255, 159, 10, 0.9);
+        }];
+    }];
+
+    UIWindow *w = appWindow();
+    if (!w) return;
+
+    BOOL ph = controlPanel.hidden, nh = namesStrip.hidden, ch = tapCircle.hidden;
+    controlPanel.hidden = YES; namesStrip.hidden = YES; tapCircle.hidden = YES;
+
+    CGPoint pt = [tapCircle.superview convertPoint:tapCircle.center toView:w];
+    UIView *target = [w hitTest:pt withEvent:nil];
+    CGPoint localPt = [target convertPoint:pt fromView:w];
+
+    controlPanel.hidden = ph; namesStrip.hidden = nh; tapCircle.hidden = ch;
+
+    if (!target || target == tapCircle) return;
+
+    UIControl *ctrl = nil;
+    if ([target isKindOfClass:[UIControl class]]) ctrl = (UIControl *)target;
+    else {
+        UIResponder *r = target.nextResponder;
+        while (r) { if ([r isKindOfClass:[UIControl class]]) { ctrl = (UIControl *)r; break; } r = r.nextResponder; }
+    }
+    [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
+    [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
+
+    if (![target isKindOfClass:[UIControl class]] && [target respondsToSelector:@selector(touchesBegan:withEvent:)]) {
+        if (ctrl) { /* already handled */ }
+    }
+
+    UIView *fx = [[UIView alloc] initWithFrame:CGRectMake(0,0,12,12)];
+    fx.center = pt; fx.backgroundColor = color(100, 200, 255, 0.8);
+    fx.layer.cornerRadius = 6; fx.userInteractionEnabled = NO;
+    [w addSubview:fx];
+    [UIView animateWithDuration:0.25 animations:^{
+        fx.alpha = 0; fx.transform = CGAffineTransformMakeScale(3, 3);
+    } completion:^(BOOL f) { [fx removeFromSuperview]; }];
+
+    udpSend(@"TAP");
 }
+
++ (void)start {
+    if (tapTimer) return;
+    CGFloat interval = currentDelay;
+    if (interval < 0.005) interval = 0.005;
+    tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, interval * NSEC_PER_SEC, 0);
+    dispatch_source_set_event_handler(tapTimer, ^{ [self fireTap]; });
+    dispatch_resume(tapTimer);
+}
+
++ (void)stop {
+    if (tapTimer) { dispatch_source_cancel(tapTimer); tapTimer = NULL; }
+}
+
+@end
 
 #pragma mark - UI Setup
 
-@interface YLTUI : NSObject
-+ (void)setup;
+@interface Controller : NSObject
++ (void)buildUI;
 @end
 
-@implementation YLTUI
+@implementation Controller
 
-+ (void)setup {
-    UIWindow *kw = activeWindow();
-    if (!kw) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self setup];
-        });
-        return;
-    }
++ (void)buildUI {
+    UIWindow *w = appWindow();
+    if (!w) { dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self buildUI]; }); return; }
+    if (controlPanel) return;
 
-    NSLog(@"[YLT] Setting up UI on %@", kw);
+    NSLog(@"[YLT] Building UI");
     CGFloat sw = UIScreen.mainScreen.bounds.size.width;
 
-    // ---- Control Panel (small) ----
-    CGFloat pw = 220, ph = 160, px = 20, py = 40;
-    panel = [[UIView alloc] initWithFrame:CGRectMake(px, py, pw, ph)];
-    panel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.92];
-    panel.layer.cornerRadius = 16;
-    panel.layer.borderColor = [UIColor colorWithRed:0.2 green:0.5 blue:1.0 alpha:0.6].CGColor;
-    panel.layer.borderWidth = 1.5;
-    panel.layer.shadowColor = UIColor.blackColor.CGColor;
-    panel.layer.shadowOpacity = 0.5;
-    panel.layer.shadowOffset = CGSizeMake(0, 4);
-    panel.layer.shadowRadius = 12;
-    panel.clipsToBounds = NO;
-    panel.tag = 100;
+    // Elegant colors
+    UIColor *bg = color(18, 18, 30, 0.92);
+    UIColor *border = color(60, 120, 255, 0.5);
+    UIColor *accent = color(60, 120, 255, 1);
+    UIColor *gold = color(255, 200, 50, 1);
+    UIColor *redOn = color(255, 69, 58, 1);
+    UIColor *greenOff = color(50, 200, 80, 1);
 
-    CGFloat yy = 10;
+    // Control Panel
+    CGFloat pw = 200, ph = 155, px = 16, py = 50;
+    controlPanel = [[UIView alloc] initWithFrame:CGRectMake(px, py, pw, ph)];
+    controlPanel.backgroundColor = bg;
+    controlPanel.layer.cornerRadius = 18;
+    controlPanel.layer.borderColor = border.CGColor;
+    controlPanel.layer.borderWidth = 1;
+    controlPanel.layer.shadowColor = UIColor.blackColor.CGColor;
+    controlPanel.layer.shadowOpacity = 0.4;
+    controlPanel.layer.shadowOffset = CGSizeMake(0, 6);
+    controlPanel.layer.shadowRadius = 20;
+    controlPanel.tag = 100;
 
-    // Toggle
-    toggleBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    toggleBtn.frame = CGRectMake(12, yy, pw - 24, 36);
-    toggleBtn.backgroundColor = [UIColor colorWithRed:0.15 green:0.7 blue:0.25 alpha:1];
-    toggleBtn.layer.cornerRadius = 10;
-    toggleBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
-    [toggleBtn setTitle:@"▶ تشغيل" forState:UIControlStateNormal];
-    [toggleBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    [toggleBtn addTarget:self action:@selector(tapToggle) forControlEvents:UIControlEventTouchUpInside];
-    [panel addSubview:toggleBtn];
-    yy += 42;
+    // Gradient overlay
+    CAGradientLayer *grad = [CAGradientLayer layer];
+    grad.frame = controlPanel.bounds;
+    grad.colors = @[(id)color(30, 30, 60, 0.3).CGColor, (id)color(10, 10, 20, 0).CGColor];
+    grad.startPoint = CGPointMake(0, 0);
+    grad.endPoint = CGPointMake(1, 1);
+    [controlPanel.layer addSublayer:grad];
 
-    // Slider
-    speedSlider = [[UISlider alloc] initWithFrame:CGRectMake(12, yy, pw - 24, 24)];
-    speedSlider.minimumValue = 0.0;
-    speedSlider.maximumValue = 0.05;
-    speedSlider.value = 0.0;
-    speedSlider.continuous = YES;
-    speedSlider.minimumTrackTintColor = [UIColor colorWithRed:0.2 green:0.5 blue:1.0 alpha:1];
-    speedSlider.maximumTrackTintColor = [UIColor colorWithWhite:0.3 alpha:1];
-    [speedSlider addTarget:self action:@selector(speedChange) forControlEvents:UIControlEventValueChanged];
-    [panel addSubview:speedSlider];
-    yy += 26;
+    CGFloat y = 10;
 
-    speedValLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, yy, pw - 24, 14)];
-    speedValLabel.text = @"0.00 ثانية";
-    speedValLabel.textColor = [UIColor colorWithRed:0.5 green:0.7 blue:1.0 alpha:1];
-    speedValLabel.font = [UIFont systemFontOfSize:10];
-    speedValLabel.textAlignment = NSTextAlignmentCenter;
-    [panel addSubview:speedValLabel];
-    yy += 20;
+    // Run/Stop
+    runBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    runBtn.frame = CGRectMake(10, y, pw-20, 38);
+    runBtn.backgroundColor = greenOff;
+    runBtn.layer.cornerRadius = 12;
+    runBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [runBtn setTitle:@"▶  تشغيل" forState:UIControlStateNormal];
+    [runBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    [runBtn addTarget:self action:@selector(toggleRun) forControlEvents:UIControlEventTouchUpInside];
+    [controlPanel addSubview:runBtn];
+    y += 44;
 
-    // Hide button
+    // Delay Slider
+    delaySlider = [[UISlider alloc] initWithFrame:CGRectMake(10, y, pw-20, 22)];
+    delaySlider.minimumValue = 0;
+    delaySlider.maximumValue = 0.05;
+    delaySlider.value = 0;
+    delaySlider.continuous = YES;
+    delaySlider.minimumTrackTintColor = accent;
+    delaySlider.maximumTrackTintColor = color(60, 60, 80, 1);
+    [delaySlider addTarget:self action:@selector(delayChange) forControlEvents:UIControlEventValueChanged];
+    [controlPanel addSubview:delaySlider];
+    y += 26;
+
+    delayLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, y, pw-20, 14)];
+    delayLabel.text = @"سرعة 0.00 ث";
+    delayLabel.textColor = color(150, 180, 255, 1);
+    delayLabel.font = [UIFont systemFontOfSize:10];
+    delayLabel.textAlignment = NSTextAlignmentCenter;
+    [controlPanel addSubview:delayLabel];
+    y += 20;
+
+    // Status
+    UILabel *statusLbl = [[UILabel alloc] initWithFrame:CGRectMake(10, ph-18, pw-44, 12)];
+    statusLbl.text = @"⏻  مستعد";
+    statusLbl.textColor = color(120, 120, 140, 1);
+    statusLbl.font = [UIFont systemFontOfSize:9];
+    [controlPanel addSubview:statusLbl];
+
+    // Hide
     UIButton *hideBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    hideBtn.frame = CGRectMake(pw - 34, 6, 24, 24);
-    hideBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.8];
-    hideBtn.layer.cornerRadius = 12;
-    hideBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    hideBtn.frame = CGRectMake(pw-32, 6, 22, 22);
+    hideBtn.backgroundColor = color(40, 40, 60, 1);
+    hideBtn.layer.cornerRadius = 11;
+    hideBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     [hideBtn setTitle:@"−" forState:UIControlStateNormal];
     [hideBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    [hideBtn addTarget:self action:@selector(tapHide) forControlEvents:UIControlEventTouchUpInside];
-    [panel addSubview:hideBtn];
+    [hideBtn addTarget:self action:@selector(hidePanel) forControlEvents:UIControlEventTouchUpInside];
+    [controlPanel addSubview:hideBtn];
 
-    [kw addSubview:panel];
+    [w addSubview:controlPanel];
 
-    // ---- Names Strip (movable, horizontal) ----
-    CGFloat nbW = sw - 40, nbH = 36, nbX = 20, nbY = py + ph + 12;
-    namesBar = [[UIView alloc] initWithFrame:CGRectMake(nbX, nbY, nbW, nbH)];
-    namesBar.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.9];
-    namesBar.layer.cornerRadius = 18;
-    namesBar.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:0.5].CGColor;
-    namesBar.layer.borderWidth = 1;
-    namesBar.clipsToBounds = YES;
-    namesBar.tag = 400;
+    // Mini Panel (collapsed)
+    miniPanel = [[UIView alloc] initWithFrame:CGRectMake(sw-80-10, 60, 80, 80)];
+    miniPanel.backgroundColor = bg;
+    miniPanel.layer.cornerRadius = 18;
+    miniPanel.layer.borderColor = border.CGColor;
+    miniPanel.layer.borderWidth = 1;
+    miniPanel.hidden = YES;
+    miniPanel.tag = 200;
 
-    UIScrollView *sc = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, nbW, nbH)];
-    sc.showsHorizontalScrollIndicator = NO;
-    sc.tag = 500;
+    UIButton *showBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    showBtn.frame = CGRectMake(10, 10, 60, 60);
+    showBtn.backgroundColor = color(30, 30, 50, 1);
+    showBtn.layer.cornerRadius = 30;
+    showBtn.titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    [showBtn setTitle:@"▶" forState:UIControlStateNormal];
+    [showBtn setTitleColor:accent forState:UIControlStateNormal];
+    [showBtn addTarget:self action:@selector(showPanel) forControlEvents:UIControlEventTouchUpInside];
+    [miniPanel addSubview:showBtn];
 
-    CGFloat sx = 12;
-    CGFloat sh = 26;
-    CGFloat sy = (nbH - sh) / 2;
-    for (NSString *name in names) {
-        CGSize ts = [name sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:11 weight:UIFontWeightSemibold]}];
-        CGFloat sw2 = ts.width + 20;
-        UIView *badge = [[UIView alloc] initWithFrame:CGRectMake(sx, sy, sw2, sh)];
-        badge.backgroundColor = [UIColor colorWithRed:0.12 green:0.35 blue:0.65 alpha:0.8];
-        badge.layer.cornerRadius = 8;
-        badge.layer.borderColor = [UIColor colorWithRed:0.3 green:0.6 blue:1.0 alpha:0.4].CGColor;
-        badge.layer.borderWidth = 1;
+    [w addSubview:miniPanel];
 
-        UILabel *lb = [[UILabel alloc] initWithFrame:badge.bounds];
-        lb.text = name;
-        lb.textColor = UIColor.whiteColor;
-        lb.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
-        lb.textAlignment = NSTextAlignmentCenter;
-        [badge addSubview:lb];
-        [sc addSubview:badge];
-        sx += sw2 + 6;
+    // Names Strip
+    CGFloat nsW = sw-32, nsH = 34, nsX = 16, nsY = py+ph+14;
+    namesStrip = [[UIView alloc] initWithFrame:CGRectMake(nsX, nsY, nsW, nsH)];
+    namesStrip.backgroundColor = color(18, 18, 30, 0.85);
+    namesStrip.layer.cornerRadius = 17;
+    namesStrip.layer.borderColor = color(60, 60, 80, 0.6).CGColor;
+    namesStrip.layer.borderWidth = 1;
+    namesStrip.tag = 400;
+
+    UIScrollView *scroll = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, nsW, nsH)];
+    scroll.showsHorizontalScrollIndicator = NO;
+
+    CGFloat sx = 10, sh = 24, sy = (nsH-sh)/2;
+    for (NSString *n in accountNames) {
+        CGFloat sw2 = [n sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:10 weight:UIFontWeightSemibold]}].width + 18;
+        UIView *b = [[UIView alloc] initWithFrame:CGRectMake(sx, sy, sw2, sh)];
+        b.backgroundColor = color(30, 60, 120, 0.7);
+        b.layer.cornerRadius = 7;
+        b.layer.borderColor = color(60, 120, 255, 0.4).CGColor;
+        b.layer.borderWidth = 0.5;
+        UILabel *l = [[UILabel alloc] initWithFrame:b.bounds];
+        l.text = n; l.textColor = UIColor.whiteColor;
+        l.font = [UIFont systemFontOfSize:10 weight:UIFontWeightSemibold];
+        l.textAlignment = NSTextAlignmentCenter;
+        [b addSubview:l]; [scroll addSubview:b];
+        sx += sw2 + 5;
     }
-    sc.contentSize = CGSizeMake(sx, nbH);
-    [namesBar addSubview:sc];
+    scroll.contentSize = CGSizeMake(sx, nsH);
+    [namesStrip addSubview:scroll];
 
-    // Drag gesture for names bar
-    UIPanGestureRecognizer *np = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragView:)];
-    [namesBar addGestureRecognizer:np];
+    UIPanGestureRecognizer *ng = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragItem:)];
+    [namesStrip addGestureRecognizer:ng];
 
-    [kw addSubview:namesBar];
+    [w addSubview:namesStrip];
 
-    // ---- Tapping Circle ----
-    CGFloat cs = 56, cx2 = (sw - cs) / 2, cy2 = nbY + nbH + 30;
-    circleView = [[UIView alloc] initWithFrame:CGRectMake(cx2, cy2, cs, cs)];
-    circleView.backgroundColor = [UIColor colorWithRed:0.95 green:0.25 blue:0.1 alpha:0.95];
-    circleView.layer.cornerRadius = cs / 2;
-    circleView.layer.borderColor = UIColor.whiteColor.CGColor;
-    circleView.layer.borderWidth = 2.5;
-    circleView.layer.shadowColor = UIColor.redColor.CGColor;
-    circleView.layer.shadowOpacity = 0.6;
-    circleView.layer.shadowOffset = CGSizeMake(0, 0);
-    circleView.layer.shadowRadius = 10;
-    circleView.userInteractionEnabled = YES;
-    circleView.tag = 300;
+    // Tap Circle
+    CGFloat cs = 50, cx = (sw-cs)/2, cy = nsY+nsH+24;
+    tapCircle = [[UIView alloc] initWithFrame:CGRectMake(cx, cy, cs, cs)];
+    tapCircle.backgroundColor = color(255, 69, 58, 0.95);
+    tapCircle.layer.cornerRadius = cs/2;
+    tapCircle.layer.borderColor = UIColor.whiteColor.CGColor;
+    tapCircle.layer.borderWidth = 2;
+    tapCircle.layer.shadowColor = color(255, 69, 58, 0.6).CGColor;
+    tapCircle.layer.shadowOpacity = 0.8;
+    tapCircle.layer.shadowOffset = CGSizeMake(0, 0);
+    tapCircle.layer.shadowRadius = 12;
+    tapCircle.userInteractionEnabled = YES;
+    tapCircle.tag = 300;
 
-    UILabel *cl = [[UILabel alloc] initWithFrame:circleView.bounds];
-    cl.text = @"515";
-    cl.textColor = UIColor.whiteColor;
-    cl.font = [UIFont boldSystemFontOfSize:16];
+    UILabel *cl = [[UILabel alloc] initWithFrame:tapCircle.bounds];
+    cl.text = @"515"; cl.textColor = UIColor.whiteColor;
+    cl.font = [UIFont boldSystemFontOfSize:18];
     cl.textAlignment = NSTextAlignmentCenter;
-    [circleView addSubview:cl];
+    [tapCircle addSubview:cl];
 
-    UIPanGestureRecognizer *cp = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragCircle:)];
-    [circleView addGestureRecognizer:cp];
+    UIPanGestureRecognizer *cg = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragCircle:)];
+    [tapCircle addGestureRecognizer:cg];
 
-    // Long press to set as main
-    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(setMain:)];
-    lp.minimumPressDuration = 1.0;
-    [circleView addGestureRecognizer:lp];
+    UILongPressGestureRecognizer *lg = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(setMaster:)];
+    lg.minimumPressDuration = 1.0;
+    [tapCircle addGestureRecognizer:lg];
 
-    [kw addSubview:circleView];
+    [w addSubview:tapCircle];
 
-    // ---- Minimized Panel ----
-    CGFloat mw = 70, mh = 70;
-    minimizedPanel = [[UIView alloc] initWithFrame:CGRectMake(sw - mw - 10, 60, mw, mh)];
-    minimizedPanel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.92];
-    minimizedPanel.layer.cornerRadius = 16;
-    minimizedPanel.layer.borderColor = [UIColor colorWithRed:0.2 green:0.5 blue:1.0 alpha:0.6].CGColor;
-    minimizedPanel.layer.borderWidth = 1.5;
-    minimizedPanel.hidden = YES;
-    minimizedPanel.tag = 200;
-
-    UIButton *ab = [UIButton buttonWithType:UIButtonTypeSystem];
-    ab.frame = CGRectMake(10, 10, 50, 50);
-    ab.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.9];
-    ab.layer.cornerRadius = 25;
-    ab.titleLabel.font = [UIFont boldSystemFontOfSize:20];
-    [ab setTitle:@"▶" forState:UIControlStateNormal];
-    [ab setTitleColor:[UIColor colorWithRed:0.2 green:0.5 blue:1.0 alpha:1] forState:UIControlStateNormal];
-    [ab addTarget:self action:@selector(tapShow) forControlEvents:UIControlEventTouchUpInside];
-    [minimizedPanel addSubview:ab];
-
-    [kw addSubview:minimizedPanel];
-
-    // Init UDP
     udpInit();
-
-    NSLog(@"[YLT] UI setup complete");
+    NSLog(@"[YLT] UI ready");
 }
 
 #pragma mark - Actions
 
-+ (void)tapToggle {
-    isRunning = !isRunning;
-    if (isRunning) {
-        toggleBtn.backgroundColor = [UIColor colorWithRed:0.8 green:0.15 blue:0.15 alpha:1];
-        [toggleBtn setTitle:@"■ إيقاف" forState:UIControlStateNormal];
-        [YLTapSync startTapping];
++ (void)toggleRun {
+    running = !running;
+    if (running) {
+        runBtn.backgroundColor = color(255, 69, 58, 1);
+        [runBtn setTitle:@"■  إيقاف" forState:UIControlStateNormal];
+        [Tapper start];
     } else {
-        toggleBtn.backgroundColor = [UIColor colorWithRed:0.15 green:0.7 blue:0.25 alpha:1];
-        [toggleBtn setTitle:@"▶ تشغيل" forState:UIControlStateNormal];
-        [YLTapSync stopTapping];
+        runBtn.backgroundColor = color(50, 200, 80, 1);
+        [runBtn setTitle:@"▶  تشغيل" forState:UIControlStateNormal];
+        [Tapper stop];
     }
 }
 
-+ (void)speedChange {
-    CGFloat v = round(speedSlider.value * 100) / 100;
-    speedSlider.value = v;
-    tapDelay = v;
-    speedValLabel.text = [NSString stringWithFormat:@"%.2f ثانية", v];
-    if (isRunning) { [YLTapSync stopTapping]; [YLTapSync startTapping]; }
++ (void)delayChange {
+    CGFloat v = round(delaySlider.value * 100) / 100;
+    delaySlider.value = v; currentDelay = v;
+    delayLabel.text = [NSString stringWithFormat:@"سرعة %.2f ث", v];
+    if (running) { [Tapper stop]; [Tapper start]; }
 }
 
-+ (void)tapHide {
-    panel.hidden = YES;
-    minimizedPanel.hidden = NO;
++ (void)hidePanel {
+    controlPanel.hidden = YES; miniPanel.hidden = NO;
 }
 
-+ (void)tapShow {
-    minimizedPanel.hidden = YES;
-    panel.hidden = NO;
++ (void)showPanel {
+    miniPanel.hidden = YES; controlPanel.hidden = NO;
 }
 
-+ (void)dragView:(UIPanGestureRecognizer *)g {
-    UIView *v = g.view;
-    CGPoint t = [g translationInView:v.superview];
-    v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
++ (void)dragItem:(UIPanGestureRecognizer *)g {
+    UIView *v = g.view; CGPoint t = [g translationInView:v.superview];
+    v.center = CGPointMake(v.center.x+t.x, v.center.y+t.y);
     [g setTranslation:CGPointZero inView:v.superview];
 }
 
 + (void)dragCircle:(UIPanGestureRecognizer *)g {
-    UIView *v = g.view;
-    CGPoint t = [g translationInView:v.superview];
-    v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
+    UIView *v = g.view; CGPoint t = [g translationInView:v.superview];
+    v.center = CGPointMake(v.center.x+t.x, v.center.y+t.y);
     [g setTranslation:CGPointZero inView:v.superview];
-
-    if (g.state == UIGestureRecognizerStateEnded) {
-        // Broadcast position to all connected instances
-        NSString *pos = [NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y];
-        udpSend(pos);
-    }
+    if (g.state == UIGestureRecognizerStateEnded && isMain)
+        udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
 }
 
-+ (void)setMain:(UILongPressGestureRecognizer *)g {
++ (void)setMaster:(UILongPressGestureRecognizer *)g {
     if (g.state == UIGestureRecognizerStateBegan) {
-        isFirstInstance = YES;
-        circleView.layer.borderColor = [UIColor yellowColor].CGColor;
-        circleView.layer.borderWidth = 3;
-        [YLTUI showAlert:@"✓ رئيسي" msg:@"هذه النسخة هي الرئيسية"];
+        isMain = YES;
+        tapCircle.layer.borderColor = color(255, 200, 50, 1).CGColor;
+        tapCircle.layer.borderWidth = 3;
+        [self alert:@"✓ رئيسي" msg:@"النسخة الرئيسية - تتحكم بجميع النسخ"];
+        udpSend([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
     }
 }
 
-#pragma mark - Alert
-
-+ (void)showAlert:(NSString *)title msg:(NSString *)msg {
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:msg preferredStyle:UIAlertControllerStyleAlert];
++ (void)alert:(NSString *)t msg:(NSString *)m {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:t message:m preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-    UIViewController *rvc = activeWindow().rootViewController;
-    if (rvc) [rvc presentViewController:a animated:YES completion:nil];
+    [appWindow().rootViewController presentViewController:a animated:YES completion:nil];
 }
 
 @end
 
 #pragma mark - Constructor
 
-__attribute__((constructor)) static void init(void) {
-    NSLog(@"[YLT] Constructor called");
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [YLTUI setup];
-    });
+%ctor {
+    NSLog(@"[YLT] Loading...");
+    dispatch_async(dispatch_get_main_queue(), ^{ [Controller buildUI]; });
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         UIWindow *w = n.object;
-        if (w && !w.hidden && w.rootViewController && !panel) {
-            NSLog(@"[YLT] Window visible, setting up");
-            [YLTUI setup];
-        }
+        if (w && !w.hidden && w.rootViewController && !controlPanel) [Controller buildUI];
     }];
 }
