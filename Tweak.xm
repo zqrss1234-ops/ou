@@ -30,6 +30,7 @@ static CAGradientLayer *accentLine = nil;
 static BOOL running = NO;
 static BOOL isMain = YES;
 static CGFloat currentDelay = 200.0;
+static UIBackgroundTaskIdentifier bgTask = UIBackgroundTaskInvalid;
 
 #pragma mark - Helpers
 
@@ -60,6 +61,25 @@ static void ensureOnTop(void) {
         if (tapCircle.superview != w) { [tapCircle removeFromSuperview]; [w addSubview:tapCircle]; }
         [w bringSubviewToFront:tapCircle];
     }
+}
+
+#pragma mark - Background Task
+
+static void startBgTask(void) {
+    if (bgTask != UIBackgroundTaskInvalid) return;
+    bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"YLTool" expirationHandler:^{
+        [[UIApplication sharedApplication] endBackgroundTask:bgTask];
+        bgTask = UIBackgroundTaskInvalid;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            startBgTask();
+        });
+    }];
+}
+
+static void stopBgTask(void) {
+    if (bgTask == UIBackgroundTaskInvalid) return;
+    [[UIApplication sharedApplication] endBackgroundTask:bgTask];
+    bgTask = UIBackgroundTaskInvalid;
 }
 
 #pragma mark - Darwin IPC
@@ -632,6 +652,13 @@ __attribute__((constructor)) static void init() {
         if (!ctrlBox) [Controller buildUI];
     }];
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeKeyNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        ensureOnTop();
+    }];
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        startBgTask();
+    }];
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillEnterForegroundNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        stopBgTask();
         ensureOnTop();
     }];
     dispatch_async(dispatch_get_main_queue(), ^{
