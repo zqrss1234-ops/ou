@@ -72,6 +72,7 @@ static void ensureOnTop(void) {
 static void startBgTask(void) {
     if (bgTask != UIBackgroundTaskInvalid) return;
     __block UIBackgroundTaskIdentifier task = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"YLToolBg" expirationHandler:^{
+        NSLog(@"[YLT] Bg expired %lu", (unsigned long)task);
         [[UIApplication sharedApplication] endBackgroundTask:task];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (bgTask == task) bgTask = UIBackgroundTaskInvalid;
@@ -79,6 +80,7 @@ static void startBgTask(void) {
         });
     }];
     if (task != UIBackgroundTaskInvalid) {
+        NSLog(@"[YLT] Bg started %lu", (unsigned long)task);
         bgTask = task;
     } else {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -108,8 +110,12 @@ static NSString *ipcRunPath = @"/tmp/yltool_run";
 static NSString *ipcPosPath = @"/tmp/yltool_pos";
 
 static void ipcInit(void) {
-    [@"0" writeToFile:ipcRunPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    [@"0,0" writeToFile:ipcPosPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSError *e = nil;
+    [@"0" writeToFile:ipcRunPath atomically:YES encoding:NSUTF8StringEncoding error:&e];
+    if (e) NSLog(@"[YLT] ipcRun: %@", e.localizedDescription);
+    e = nil;
+    [@"0,0" writeToFile:ipcPosPath atomically:YES encoding:NSUTF8StringEncoding error:&e];
+    if (e) NSLog(@"[YLT] ipcPos: %@", e.localizedDescription);
 }
 
 static void ipcWriteRun(BOOL on) {
