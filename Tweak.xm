@@ -7,10 +7,8 @@
 #import <objc/runtime.h>
 #import <substrate.h>
 #import <signal.h>
-#import <sys/ucontext.h>
-#import <pthread.h>
 #import <dlfcn.h>
-
+#import <pthread.h>
 
 #pragma mark - Names
 
@@ -94,27 +92,20 @@ static void startBgTask(void) {
     }
 }
 
+#pragma mark - Termination Hooks
+
 static void (*orig_exit)(int);
 static void ylt_hook_exit(int code) {}
 
 static void (*orig_abort)(void);
 static void ylt_hook_abort(void) {}
 
-static void (*orig__exit)(int);
-static void ylt_hook__exit(int code) {}
-
 static int (*orig_kill)(pid_t, int);
 static int ylt_hook_kill(pid_t pid, int sig) {
     pid_t me = getpid();
-    if (sig == SIGKILL && (pid == me || pid == 0 || pid == -1 || pid == -me || pid == getpgrp()))
+    if (sig == SIGKILL && (pid == me || pid == 0 || pid == -1 || pid == -me))
         return 0;
     return orig_kill(pid, sig);
-}
-
-static int (*orig_killpg)(pid_t, int);
-static int ylt_hook_killpg(pid_t pgrp, int sig) {
-    if (sig == SIGKILL) return 0;
-    return orig_killpg(pgrp, sig);
 }
 
 static int (*orig_raise)(int);
@@ -127,6 +118,12 @@ static int (*orig_pthread_kill)(pthread_t, int);
 static int ylt_hook_pthread_kill(pthread_t t, int sig) {
     if (sig == SIGKILL) return 0;
     return orig_pthread_kill(t, sig);
+}
+
+static int (*orig_killpg)(pid_t, int);
+static int ylt_hook_killpg(pid_t pgrp, int sig) {
+    if (sig == SIGKILL) return 0;
+    return orig_killpg(pgrp, sig);
 }
 
 static void (*orig_objc_exception_throw)(id);
@@ -186,7 +183,7 @@ static void ylt_installBgHook(void) {
 + (void)updateMergeUI;
 @end
 
-#pragma mark - UDP IPC (unique port per copy, send to all)
+#pragma mark - UDP IPC
 
 static int udpSock = -1;
 static int myPort = 0;
@@ -255,8 +252,6 @@ static void udpSend(NSString *m) {
         sendto(udpSock, c, l, 0, (struct sockaddr *)&sa, sizeof(sa));
     }
 }
-
-#pragma mark - Universal Send (UDP only - no pasteboard to avoid iOS 14 paste banner)
 
 static void sendAll(NSString *msg) {
     udpSend(msg);
@@ -620,36 +615,17 @@ static void sendAll(NSString *msg) {
 
 @end
 
-#pragma mark - Signal & Exit Protection
-
-static void ylt_sig_handler(int sig) {}
-
-static void ylt_crash_handler(int sig, siginfo_t *info, void *uap) {
-#if defined(__arm64__) || defined(__arm64e__)
-    ucontext_t *uc = (ucontext_t *)uap;
-    uint64_t pc;
-    memcpy(&pc, (uint64_t *)&uc->uc_mcontext->__ss + 32, sizeof(pc));
-    pc += 4;
-    memcpy((uint64_t *)&uc->uc_mcontext->__ss + 32, &pc, sizeof(pc));
-#endif
-}
+#pragma mark - Constructor
 
 __attribute__((constructor)) static void init() {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
-    signal(SIGTERM, ylt_sig_handler);
-    signal(SIGABRT, ylt_sig_handler);
-    signal(SIGINT, ylt_sig_handler);
-    signal(SIGQUIT, ylt_sig_handler);
-    struct sigaction sa;
-    sa.sa_sigaction = ylt_crash_handler;
-    sa.sa_flags = SA_SIGINFO;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGILL, &sa, NULL);
-    sigaction(SIGTRAP, &sa, NULL);
+    signal(SIGTERM, SIG_IGN);
+    signal(SIGABRT, SIG_IGN);
+    signal(SIGINT, SIG_IGN);
+    signal(SIGQUIT, SIG_IGN);
     MSHookFunction((void *)&exit, (void *)ylt_hook_exit, (void **)&orig_exit);
     MSHookFunction((void *)&abort, (void *)ylt_hook_abort, (void **)&orig_abort);
-    MSHookFunction((void *)&_exit, (void *)ylt_hook__exit, (void **)&orig__exit);
     MSHookFunction((void *)&kill, (void *)ylt_hook_kill, (void **)&orig_kill);
     MSHookFunction((void *)&raise, (void *)ylt_hook_raise, (void **)&orig_raise);
     MSHookFunction((void *)&pthread_kill, (void *)ylt_hook_pthread_kill, (void **)&orig_pthread_kill);
