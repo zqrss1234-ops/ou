@@ -90,10 +90,14 @@ static void startBgTask(void) {
 }
 
 static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
+static NSInteger ylt_hook_appState(id self, SEL _cmd) { return 0; }
 
 static void ylt_installBgHook(void) {
-    Method m = class_getInstanceMethod(objc_getClass("UIApplication"), @selector(_isBackgroundTaskExpirationEnabled));
+    Class app = objc_getClass("UIApplication");
+    Method m = class_getInstanceMethod(app, sel_registerName("_isBackgroundTaskExpirationEnabled"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_isBacEnabled);
+    m = class_getInstanceMethod(app, sel_registerName("applicationState"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_appState);
 }
 
 #pragma mark - Forward Declarations
