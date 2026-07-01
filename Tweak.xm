@@ -10,7 +10,7 @@
 #import <sys/ucontext.h>
 #import <pthread.h>
 #import <dlfcn.h>
-#import <mach/thread_status.h>
+
 
 #pragma mark - Names
 
@@ -627,8 +627,10 @@ static void ylt_sig_handler(int sig) {}
 static void ylt_crash_handler(int sig, siginfo_t *info, void *uap) {
 #if defined(__arm64__) || defined(__arm64e__)
     ucontext_t *uc = (ucontext_t *)uap;
-    arm_thread_state64_t *state = &uc->uc_mcontext->__ss;
-    arm_thread_state64_set_pc(state, arm_thread_state64_get_pc(*state) + 4);
+    uint64_t pc;
+    memcpy(&pc, (uint64_t *)&uc->uc_mcontext->__ss + 32, sizeof(pc));
+    pc += 4;
+    memcpy((uint64_t *)&uc->uc_mcontext->__ss + 32, &pc, sizeof(pc));
 #endif
 }
 
