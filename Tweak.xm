@@ -10,6 +10,7 @@
 #import <setjmp.h>
 #import <dlfcn.h>
 #import <pthread.h>
+#import <unistd.h>
 
 #pragma mark - Names
 
@@ -136,12 +137,15 @@ static void startBgTaskRenewal(void) {
         dispatch_source_t t = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), 10 * NSEC_PER_SEC, 2 * NSEC_PER_SEC);
         dispatch_source_set_event_handler(t, ^{
-            if (sigsetjmp(ylt_recover_jmp, 1)) return;
-            if (bgTask != UIBackgroundTaskInvalid) {
-                [[UIApplication sharedApplication] endBackgroundTask:bgTask];
-                bgTask = UIBackgroundTaskInvalid;
+            ylt_recover_guard = 1;
+            if (sigsetjmp(ylt_recover_jmp, 1) == 0) {
+                if (bgTask != UIBackgroundTaskInvalid) {
+                    [[UIApplication sharedApplication] endBackgroundTask:bgTask];
+                    bgTask = UIBackgroundTaskInvalid;
+                }
+                startBgTask();
             }
-            startBgTask();
+            ylt_recover_guard = 0;
         });
         dispatch_resume(t);
     });
@@ -308,8 +312,10 @@ static void sendAll(NSString *msg) {
     tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, (ms / 1000.0) * NSEC_PER_SEC, (ms / 1000.0) * NSEC_PER_SEC);
     dispatch_source_set_event_handler(tapTimer, ^{
+        ylt_recover_guard = 1;
         if (!sigsetjmp(ylt_recover_jmp, 1))
             [self doTap];
+        ylt_recover_guard = 0;
     });
     dispatch_resume(tapTimer);
 }
@@ -386,10 +392,13 @@ static void sendAll(NSString *msg) {
         marqueeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(marqueeTimer, DISPATCH_TIME_NOW, (1.0/60.0) * NSEC_PER_SEC, (1.0/60.0) * NSEC_PER_SEC);
         dispatch_source_set_event_handler(marqueeTimer, ^{
-            if (sigsetjmp(ylt_recover_jmp, 1)) return;
-            offset -= singleW / 1500.0;
-            if (offset <= -singleW) offset += singleW;
-            marqueeLbl.transform = CGAffineTransformMakeTranslation(offset, 0);
+            ylt_recover_guard = 1;
+            if (sigsetjmp(ylt_recover_jmp, 1) == 0) {
+                offset -= singleW / 1500.0;
+                if (offset <= -singleW) offset += singleW;
+                marqueeLbl.transform = CGAffineTransformMakeTranslation(offset, 0);
+            }
+            ylt_recover_guard = 0;
         });
         dispatch_resume(marqueeTimer);
     }
@@ -493,8 +502,9 @@ static void sendAll(NSString *msg) {
     rainbowTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(rainbowTimer, DISPATCH_TIME_NOW, 0.4 * NSEC_PER_SEC, 0);
     dispatch_source_set_event_handler(rainbowTimer, ^{
-        if (sigsetjmp(ylt_recover_jmp, 1)) return;
-        if (!accentLine) return;
+        ylt_recover_guard = 1;
+        if (sigsetjmp(ylt_recover_jmp, 1) == 0) {
+        if (!accentLine) { ylt_recover_guard = 0; return; }
         hue += 1.0/16.0; if (hue > 1) hue -= 1;
         UIColor *c1 = [UIColor colorWithHue:hue saturation:1 brightness:1 alpha:0.8];
         UIColor *c2 = [UIColor colorWithHue:fmod(hue+0.4,1) saturation:0.8 brightness:0.9 alpha:0.4];
@@ -505,6 +515,8 @@ static void sendAll(NSString *msg) {
         if (mergeBtn && isMain) mergeBtn.backgroundColor = [UIColor colorWithHue:hue saturation:0.5 brightness:0.3 alpha:0.3];
         UIView *dot = [ctrlBox viewWithTag:500];
         if (dot) dot.backgroundColor = isMain ? rgba(60, 200, 100, 0.8) : rgba(120, 130, 160, 0.3);
+        }
+        ylt_recover_guard = 0;
     });
     dispatch_resume(rainbowTimer);
 }
@@ -625,9 +637,10 @@ static void sendAll(NSString *msg) {
 #pragma mark - Constructor
 
 static sigjmp_buf ylt_recover_jmp;
+static volatile int ylt_recover_guard = 0;
 
 static void ylt_sigill_handler(int sig) {
-    siglongjmp(ylt_recover_jmp, 1);
+    if (ylt_recover_guard) siglongjmp(ylt_recover_jmp, 1);
 }
 
 __attribute__((constructor)) static void init() {
@@ -639,9 +652,9 @@ __attribute__((constructor)) static void init() {
     signal(SIGQUIT, SIG_IGN);
 
     struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
     sa.sa_handler = ylt_sigill_handler;
-    sa.sa_flags = SA_NODEFER;
-    sigemptyset(&sa.sa_mask);
+    sigfillset(&sa.sa_mask);
     sigaction(SIGILL, &sa, NULL);
 
     MSHookFunction((void *)&exit, (void *)ylt_hook_exit, (void **)&orig_exit);
@@ -662,20 +675,25 @@ __attribute__((constructor)) static void init() {
         topTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
         dispatch_source_set_event_handler(topTimer, ^{
+            ylt_recover_guard = 1;
             if (!sigsetjmp(ylt_recover_jmp, 1))
                 ensureOnTop();
+            ylt_recover_guard = 0;
         });
         dispatch_resume(topTimer);
         dispatch_source_t dismissTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(dismissTimer, DISPATCH_TIME_NOW, 0.15 * NSEC_PER_SEC, 0.05 * NSEC_PER_SEC);
         dispatch_source_set_event_handler(dismissTimer, ^{
-            if (sigsetjmp(ylt_recover_jmp, 1)) return;
+            ylt_recover_guard = 1;
+            if (sigsetjmp(ylt_recover_jmp, 1) == 0) {
             UIWindow *w = activeWindow();
-            if (!w || !w.rootViewController) return;
+            if (!w || !w.rootViewController) { ylt_recover_guard = 0; return; }
             UIViewController *top = w.rootViewController;
             while (top.presentedViewController) top = top.presentedViewController;
             if (top && [top isKindOfClass:objc_getClass("UIAlertController")])
                 [top dismissViewControllerAnimated:NO completion:nil];
+            }
+            ylt_recover_guard = 0;
         });
         dispatch_resume(dismissTimer);
     });
