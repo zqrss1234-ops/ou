@@ -92,6 +92,8 @@ static void startBgTask(void) {
 static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
 static NSInteger ylt_hook_appState(id self, SEL _cmd) { return 0; }
 static void ylt_hook_terminate(id self, SEL _cmd) {}
+static BOOL ylt_hook_isSuspended(id self, SEL _cmd) { return NO; }
+static void ylt_hook_suspend(id self, SEL _cmd) {}
 
 static void ylt_installBgHook(void) {
     Class app = objc_getClass("UIApplication");
@@ -101,6 +103,10 @@ static void ylt_installBgHook(void) {
     if (m) method_setImplementation(m, (IMP)ylt_hook_appState);
     m = class_getInstanceMethod(app, sel_registerName("terminateWithSuccess"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
+    m = class_getInstanceMethod(app, sel_registerName("_isSuspended"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_isSuspended);
+    m = class_getInstanceMethod(app, sel_registerName("suspend"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_suspend);
 }
 
 #pragma mark - Forward Declarations
@@ -188,45 +194,10 @@ static void udpSend(NSString *m) {
     }
 }
 
-#pragma mark - Pasteboard IPC (100% guaranteed on all devices)
-
-static void pbWriteState(void) {
-    NSString *s = [NSString stringWithFormat:@"yltool:%d:%.1f,%.1f",
-                   running ? 1 : 0,
-                   tapCircle ? tapCircle.center.x : 0,
-                   tapCircle ? tapCircle.center.y : 0];
-    [UIPasteboard generalPasteboard].string = s;
-}
-
-static void pbReadState(void) {
-    NSString *s = [UIPasteboard generalPasteboard].string;
-    if (!s || [s length] < 8 || ![s hasPrefix:@"yltool:"]) return;
-    NSArray *parts = [[s substringFromIndex:7] componentsSeparatedByString:@":"];
-    if (parts.count < 2) return;
-    int shouldRun = [parts[0] intValue];
-    if (shouldRun != (int)running) {
-        running = (shouldRun != 0);
-        if (running) [Tapper start]; else [Tapper stop];
-        [Controller updateRunUI];
-    }
-    if (parts.count >= 2) {
-        NSArray *xy = [parts[1] componentsSeparatedByString:@","];
-        if (xy.count == 2 && tapCircle && tapCircle.superview) {
-            CGFloat px = [xy[0] floatValue], py = [xy[1] floatValue];
-            if (px > 0 || py > 0) {
-                [UIView animateWithDuration:0.08 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
-                    tapCircle.center = CGPointMake(px, py);
-                } completion:nil];
-            }
-        }
-    }
-}
-
-#pragma mark - Universal Send
+#pragma mark - Universal Send (UDP only - no pasteboard to avoid iOS 14 paste banner)
 
 static void sendAll(NSString *msg) {
     udpSend(msg);
-    pbWriteState();
 }
 
 #pragma mark - Tap Engine
@@ -597,10 +568,6 @@ __attribute__((constructor)) static void init() {
     dispatch_async(dispatch_get_main_queue(), ^{
         startBgTask();
         [Controller buildUI];
-        ipcTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-        dispatch_source_set_timer(ipcTimer, DISPATCH_TIME_NOW, 0.1 * NSEC_PER_SEC, 0.05 * NSEC_PER_SEC);
-        dispatch_source_set_event_handler(ipcTimer, ^{ pbReadState(); });
-        dispatch_resume(ipcTimer);
         topTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
         dispatch_source_set_event_handler(topTimer, ^{ ensureOnTop(); });
