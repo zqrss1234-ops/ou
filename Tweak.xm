@@ -4,7 +4,7 @@
 #import <sys/select.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
-#import <notify.h>
+
 
 #pragma mark - Names
 
@@ -33,8 +33,7 @@ static BOOL running = NO;
 static BOOL isMain = YES;
 static CGFloat currentDelay = 100.0;
 static UIBackgroundTaskIdentifier bgTask = UIBackgroundTaskInvalid;
-static BOOL pendingPos = NO;
-static CGFloat pendX = 0, pendY = 0;
+
 
 #pragma mark - Helpers
 
@@ -103,40 +102,25 @@ static void startBgTask(void) {
 + (void)updateMergeUI;
 @end
 
-#pragma mark - Darwin IPC
+#pragma mark - File IPC (shared files for same-device)
 
-static int darwinPosToken = 0;
-static int darwinRunToken = 0;
-static int darwinStopToken = 0;
+static NSString *ipcRunPath = @"/tmp/yltool_run";
+static NSString *ipcPosPath = @"/tmp/yltool_pos";
 
-static void darwinInit(void) {
-    notify_register_dispatch("com.yltool.pos", &darwinPosToken, dispatch_get_main_queue(), ^(int t) {
-        uint64_t s;
-        notify_get_state(t, &s);
-        CGFloat x = (CGFloat)(s >> 32) / 10.0, y = (CGFloat)(s & 0xFFFFFFFF) / 10.0;
-        if (tapCircle && tapCircle.superview) { tapCircle.center = CGPointMake(x, y); }
-        else { pendingPos = YES; pendX = x; pendY = y; }
-    });
-    notify_register_dispatch("com.yltool.run", &darwinRunToken, dispatch_get_main_queue(), ^(int t) {
-        if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
-    });
-    notify_register_dispatch("com.yltool.stop", &darwinStopToken, dispatch_get_main_queue(), ^(int t) {
-        if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
-    });
+static void ipcInit(void) {
+    [@"0" writeToFile:ipcRunPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [@"0,0" writeToFile:ipcPosPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
-static void darwinPostPos(CGFloat x, CGFloat y) {
-    if (!darwinPosToken) return;
-    uint64_t s = ((uint64_t)(uint32_t)(x * 10) << 32) | (uint64_t)(uint32_t)(y * 10);
-    notify_set_state(darwinPosToken, s);
-    notify_post("com.yltool.pos");
+static void ipcWriteRun(BOOL on) {
+    [on ? @"1" : @"0" writeToFile:ipcRunPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
-static void darwinPost(const char *name) {
-    notify_post(name);
+static void ipcWritePos(CGFloat x, CGFloat y) {
+    [[NSString stringWithFormat:@"%.1f,%.1f", x, y] writeToFile:ipcPosPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
-#pragma mark - UDP IPC (dispatch recvfrom – proven stable)
+#pragma mark - UDP IPC (cross-device)
 
 static int udpSock = -1;
 
@@ -171,25 +155,14 @@ static void udpInit(void) {
                 if (n <= 0) continue;
                 buf[n] = 0;
                 NSString *m = [NSString stringWithUTF8String:buf];
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if ([m hasPrefix:@"POS:"]) {
-                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                        if (p.count == 2) {
-                            CGFloat x = [p[0] floatValue], y = [p[1] floatValue];
-                            if (tapCircle && tapCircle.superview) {
-                                tapCircle.center = CGPointMake(x, y);
-                            } else {
-                                pendingPos = YES; pendX = x; pendY = y;
-                            }
-                        }
-                    } else if ([m isEqualToString:@"RUN"]) {
-                        if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
-                    } else if ([m isEqualToString:@"STOP"]) {
-                        if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
-                    } else if ([m isEqualToString:@"TAP"]) {
-                        [Tapper doTapLocal];
-                    }
-                });
+                if ([m hasPrefix:@"POS:"]) {
+                    NSString *pstr = [m substringFromIndex:4];
+                    [pstr writeToFile:ipcPosPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                } else if ([m isEqualToString:@"RUN"]) {
+                    [@"1" writeToFile:ipcRunPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                } else if ([m isEqualToString:@"STOP"]) {
+                    [@"0" writeToFile:ipcRunPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                }
             }
         }
     });
@@ -207,16 +180,49 @@ static void udpSend(NSString *m) {
     sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&sa, sizeof(sa));
 }
 
-#pragma mark - Universal Send
+#pragma mark - IPC Watch (polls shared files)
+
+static void ipcWatch(void) {
+    static int lastRun = -1;
+    static CGFloat lastPosX = -1, lastPosY = -1;
+
+    NSString *run = [NSString stringWithContentsOfFile:ipcRunPath encoding:NSUTF8StringEncoding error:nil];
+    if (run) {
+        int v = [run intValue];
+        if (v != lastRun) {
+            lastRun = v;
+            if (v == 1) {
+                if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
+            } else {
+                if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
+            }
+        }
+    }
+
+    NSString *pos = [NSString stringWithContentsOfFile:ipcPosPath encoding:NSUTF8StringEncoding error:nil];
+    if (pos) {
+        NSArray *p = [pos componentsSeparatedByString:@","];
+        if (p.count == 2) {
+            CGFloat x = [p[0] floatValue], y = [p[1] floatValue];
+            if (x != lastPosX || y != lastPosY) {
+                lastPosX = x; lastPosY = y;
+                if (tapCircle && tapCircle.superview)
+                    tapCircle.center = CGPointMake(x, y);
+            }
+        }
+    }
+}
+
+#pragma mark - Universal Send (local + remote)
 
 static void sendAll(NSString *msg) {
-    if ([msg hasPrefix:@"POS:"]) {
-        NSArray *p = [[msg substringFromIndex:4] componentsSeparatedByString:@","];
-        if (p.count == 2) darwinPostPos([p[0] floatValue], [p[1] floatValue]);
-    } else if ([msg isEqualToString:@"RUN"]) {
-        darwinPost("com.yltool.run");
+    if ([msg isEqualToString:@"RUN"]) {
+        ipcWriteRun(YES);
     } else if ([msg isEqualToString:@"STOP"]) {
-        darwinPost("com.yltool.stop");
+        ipcWriteRun(NO);
+    } else if ([msg hasPrefix:@"POS:"]) {
+        NSArray *p = [[msg substringFromIndex:4] componentsSeparatedByString:@","];
+        if (p.count == 2) ipcWritePos([p[0] floatValue], [p[1] floatValue]);
     }
     udpSend(msg);
 }
@@ -499,8 +505,6 @@ static void sendAll(NSString *msg) {
     [w addSubview:tapCircle];
     [w bringSubviewToFront:tapCircle];
 
-    if (pendingPos) { pendingPos = NO; tapCircle.center = CGPointMake(pendX, pendY); }
-
     [self updateMergeUI];
     [self startRainbow];
     NSLog(@"[YLT] UI ready");
@@ -663,7 +667,7 @@ __attribute__((constructor)) static void init() {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
     NSLog(@"[YLT] Loading...");
-    darwinInit();
+    ipcInit();
     udpInit();
     dispatch_async(dispatch_get_main_queue(), ^{ [Controller buildUI]; });
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
@@ -688,5 +692,9 @@ __attribute__((constructor)) static void init() {
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
         dispatch_source_set_event_handler(topTimer, ^{ ensureOnTop(); });
         dispatch_resume(topTimer);
+        dispatch_source_t watchTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(watchTimer, DISPATCH_TIME_NOW, 0.05 * NSEC_PER_SEC, 0.02 * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(watchTimer, ^{ ipcWatch(); });
+        dispatch_resume(watchTimer);
     });
 }
