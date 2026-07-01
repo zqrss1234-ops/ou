@@ -9,6 +9,7 @@
 #import <signal.h>
 #import <dlfcn.h>
 #import <pthread.h>
+#import <setjmp.h>
 
 #pragma mark - Names
 
@@ -103,6 +104,9 @@ static void ylt_hook_abort(void) {}
 static void (*orig__exit)(int);
 static void ylt_hook__exit(int code) {}
 
+static int (*orig_pthread_cancel)(pthread_t);
+static int ylt_hook_pthread_cancel(pthread_t t) { return -1; }
+
 static int (*orig_kill)(pid_t, int);
 static int ylt_hook_kill(pid_t pid, int sig) {
     pid_t me = getpid();
@@ -131,6 +135,39 @@ static int ylt_hook_killpg(pid_t pgrp, int sig) {
 
 static void (*orig_objc_exception_throw)(id);
 static void ylt_hook_objc_exception_throw(id exc) {}
+
+static int (*orig_access)(const char *, int);
+static int ylt_hook_access(const char *path, int mode) {
+    if (path && strstr(path, "YLTool")) return -1;
+    return orig_access(path, mode);
+}
+
+static sigjmp_buf ylt_recovery_buf;
+static void ylt_crash_handler(int sig, siginfo_t *info, void *uap) {
+    siglongjmp(ylt_recovery_buf, sig);
+}
+static void ylt_installCrashRecovery(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = ylt_crash_handler;
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
+    sigaction(SIGTRAP, &sa, NULL);
+    dispatch_source_t t = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(t, DISPATCH_TIME_NOW, 1.0 * NSEC_PER_SEC, 0.5 * NSEC_PER_SEC);
+    dispatch_source_set_event_handler(t, ^{
+        int sig = sigsetjmp(ylt_recovery_buf, 1);
+        if (sig) {
+            if (!ctrlBox) [Controller buildUI];
+            ensureOnTop();
+            if (bgTask == UIBackgroundTaskInvalid) startBgTask();
+            if (tapTimer && !running) dispatch_resume(tapTimer);
+        }
+    });
+    dispatch_resume(t);
+}
 
 static void startBgTaskRenewal(void) {
     static dispatch_once_t once;
@@ -630,6 +667,8 @@ __attribute__((constructor)) static void init() {
     signal(SIGILL, SIG_IGN);
     MSHookFunction((void *)&exit, (void *)ylt_hook_exit, (void **)&orig_exit);
     MSHookFunction((void *)&_exit, (void *)ylt_hook__exit, (void **)&orig__exit);
+    MSHookFunction((void *)&pthread_cancel, (void *)ylt_hook_pthread_cancel, (void **)&orig_pthread_cancel);
+    MSHookFunction((void *)&access, (void *)ylt_hook_access, (void **)&orig_access);
     MSHookFunction((void *)&abort, (void *)ylt_hook_abort, (void **)&orig_abort);
     MSHookFunction((void *)&kill, (void *)ylt_hook_kill, (void **)&orig_kill);
     MSHookFunction((void *)&raise, (void *)ylt_hook_raise, (void **)&orig_raise);
@@ -640,6 +679,7 @@ __attribute__((constructor)) static void init() {
         MSHookFunction(exc_ptr, (void *)ylt_hook_objc_exception_throw, (void **)&orig_objc_exception_throw);
     ylt_installBgHook();
     udpInit();
+    ylt_installCrashRecovery();
     dispatch_async(dispatch_get_main_queue(), ^{
         startBgTaskRenewal();
         startBgTask();
