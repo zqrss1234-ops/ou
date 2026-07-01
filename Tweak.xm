@@ -5,6 +5,8 @@
 #import <netinet/in.h>
 #import <arpa/inet.h>
 #import <objc/runtime.h>
+#import <substrate.h>
+#import <signal.h>
 
 #pragma mark - Names
 
@@ -87,6 +89,28 @@ static void startBgTask(void) {
             startBgTask();
         });
     }
+}
+
+static void (*orig_exit)(int);
+static void ylt_hook_exit(int code) {}
+
+static void (*orig_abort)(void);
+static void ylt_hook_abort(void) {}
+
+static void startBgTaskRenewal(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        dispatch_source_t t = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), 10 * NSEC_PER_SEC, 2 * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(t, ^{
+            if (bgTask != UIBackgroundTaskInvalid) {
+                [[UIApplication sharedApplication] endBackgroundTask:bgTask];
+                bgTask = UIBackgroundTaskInvalid;
+            }
+            startBgTask();
+        });
+        dispatch_resume(t);
+    });
 }
 
 static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
@@ -558,14 +582,23 @@ static void sendAll(NSString *msg) {
 
 @end
 
-#pragma mark - Constructor
+#pragma mark - Signal & Exit Protection
+
+static void ylt_sig_handler(int sig) {}
 
 __attribute__((constructor)) static void init() {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
+    signal(SIGTERM, ylt_sig_handler);
+    signal(SIGABRT, ylt_sig_handler);
+    signal(SIGINT, ylt_sig_handler);
+    signal(SIGQUIT, ylt_sig_handler);
+    MSHookFunction((void *)&exit, (void *)ylt_hook_exit, (void **)&orig_exit);
+    MSHookFunction((void *)&abort, (void *)ylt_hook_abort, (void **)&orig_abort);
     ylt_installBgHook();
     udpInit();
     dispatch_async(dispatch_get_main_queue(), ^{
+        startBgTaskRenewal();
         startBgTask();
         [Controller buildUI];
         topTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
