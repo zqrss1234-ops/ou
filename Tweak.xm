@@ -6,12 +6,6 @@
 #import <arpa/inet.h>
 
 
-#pragma mark - Hooks
-
-%hook UIApplication
-- (BOOL)_isBackgroundTaskExpirationEnabled { return NO; }
-%end
-
 #pragma mark - Names
 
 static NSArray<NSString *> *accountNames = @[
@@ -112,10 +106,14 @@ static void startBgTask(void) {
 
 #pragma mark - File IPC (shared files for same-device)
 
-static NSString *ipcRunPath = @"/tmp/yltool_run";
-static NSString *ipcPosPath = @"/tmp/yltool_pos";
+static NSString *ipcDir = @"/var/mobile/yltool";
+static NSString *ipcRunPath = nil;
+static NSString *ipcPosPath = nil;
 
 static void ipcInit(void) {
+    [[NSFileManager defaultManager] createDirectoryAtPath:ipcDir withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0777} error:nil];
+    ipcRunPath = [ipcDir stringByAppendingPathComponent:@"run"];
+    ipcPosPath = [ipcDir stringByAppendingPathComponent:@"pos"];
     NSError *e = nil;
     [@"0" writeToFile:ipcRunPath atomically:YES encoding:NSUTF8StringEncoding error:&e];
     if (e) NSLog(@"[YLT] ipcRun: %@", e.localizedDescription);
@@ -687,11 +685,18 @@ __attribute__((constructor)) static void init() {
         if (w && !w.hidden && w.rootViewController && !ctrlBox) [Controller buildUI];
     }];
     [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        if (bgTask != UIBackgroundTaskInvalid) {
+            [[UIApplication sharedApplication] endBackgroundTask:bgTask];
+            bgTask = UIBackgroundTaskInvalid;
+        }
         ensureOnTop();
         if (!ctrlBox) [Controller buildUI];
     }];
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeKeyNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         ensureOnTop();
+    }];
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        startBgTask();
     }];
     [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         startBgTask();
