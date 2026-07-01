@@ -38,12 +38,11 @@ static UIBackgroundTaskIdentifier bgTask = UIBackgroundTaskInvalid;
 #pragma mark - Helpers
 
 static UIWindow *activeWindow(void) {
-    if (@available(iOS 13.0, *))
-        for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
-            if (![s isKindOfClass:[UIWindowScene class]]) continue;
-            UIWindow *w = [[(UIWindowScene *)s windows] firstObject];
-            if (w && !w.hidden && w.rootViewController) return w;
-        }
+    for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
+        if (![s isKindOfClass:[UIWindowScene class]]) continue;
+        UIWindow *w = [[(UIWindowScene *)s windows] firstObject];
+        if (w && !w.hidden && w.rootViewController) return w;
+    }
     for (UIWindow *w in UIApplication.sharedApplication.windows)
         if (!w.hidden && w.rootViewController) return w;
     for (UIWindow *w in UIApplication.sharedApplication.windows)
