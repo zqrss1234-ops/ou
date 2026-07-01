@@ -105,16 +105,31 @@ static void startBgTask(void) {
 
 #pragma mark - Darwin IPC
 
+static int darwinPosToken = 0;
 static int darwinRunToken = 0;
 static int darwinStopToken = 0;
 
 static void darwinInit(void) {
+    notify_register_dispatch("com.yltool.pos", &darwinPosToken, dispatch_get_main_queue(), ^(int t) {
+        uint64_t s;
+        notify_get_state(t, &s);
+        CGFloat x = (CGFloat)(s >> 32) / 10.0, y = (CGFloat)(s & 0xFFFFFFFF) / 10.0;
+        if (tapCircle && tapCircle.superview) { tapCircle.center = CGPointMake(x, y); }
+        else { pendingPos = YES; pendX = x; pendY = y; }
+    });
     notify_register_dispatch("com.yltool.run", &darwinRunToken, dispatch_get_main_queue(), ^(int t) {
         if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
     });
     notify_register_dispatch("com.yltool.stop", &darwinStopToken, dispatch_get_main_queue(), ^(int t) {
         if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
     });
+}
+
+static void darwinPostPos(CGFloat x, CGFloat y) {
+    if (!darwinPosToken) return;
+    uint64_t s = ((uint64_t)(uint32_t)(x * 10) << 32) | (uint64_t)(uint32_t)(y * 10);
+    notify_set_state(darwinPosToken, s);
+    notify_post("com.yltool.pos");
 }
 
 static void darwinPost(const char *name) {
@@ -182,18 +197,23 @@ static void udpInit(void) {
 
 static void udpSend(NSString *m) {
     if (udpSock < 0) return;
-    struct sockaddr_in bc;
-    memset(&bc, 0, sizeof(bc));
-    bc.sin_family = AF_INET;
-    bc.sin_port = htons(51551);
-    inet_aton("255.255.255.255", &bc.sin_addr);
-    sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&bc, sizeof(bc));
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(51551);
+    inet_aton("255.255.255.255", &sa.sin_addr);
+    sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&sa, sizeof(sa));
+    inet_aton("127.0.0.1", &sa.sin_addr);
+    sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&sa, sizeof(sa));
 }
 
 #pragma mark - Universal Send
 
 static void sendAll(NSString *msg) {
-    if ([msg isEqualToString:@"RUN"]) {
+    if ([msg hasPrefix:@"POS:"]) {
+        NSArray *p = [[msg substringFromIndex:4] componentsSeparatedByString:@","];
+        if (p.count == 2) darwinPostPos([p[0] floatValue], [p[1] floatValue]);
+    } else if ([msg isEqualToString:@"RUN"]) {
         darwinPost("com.yltool.run");
     } else if ([msg isEqualToString:@"STOP"]) {
         darwinPost("com.yltool.stop");
