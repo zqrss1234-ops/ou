@@ -146,28 +146,7 @@ static sigjmp_buf ylt_recovery_buf;
 static void ylt_crash_handler(int sig, siginfo_t *info, void *uap) {
     siglongjmp(ylt_recovery_buf, sig);
 }
-static void ylt_installCrashRecovery(void) {
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_sigaction = ylt_crash_handler;
-    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGSEGV, &sa, NULL);
-    sigaction(SIGBUS, &sa, NULL);
-    sigaction(SIGTRAP, &sa, NULL);
-    dispatch_source_t t = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_timer(t, DISPATCH_TIME_NOW, 1.0 * NSEC_PER_SEC, 0.5 * NSEC_PER_SEC);
-    dispatch_source_set_event_handler(t, ^{
-        int sig = sigsetjmp(ylt_recovery_buf, 1);
-        if (sig) {
-            if (!ctrlBox) [Controller buildUI];
-            ensureOnTop();
-            if (bgTask == UIBackgroundTaskInvalid) startBgTask();
-            if (tapTimer && !running) dispatch_resume(tapTimer);
-        }
-    });
-    dispatch_resume(t);
-}
+static void ylt_installCrashRecovery(void);
 
 static void startBgTaskRenewal(void) {
     static dispatch_once_t once;
@@ -222,6 +201,29 @@ static void ylt_installBgHook(void) {
 + (void)updateRunUI;
 + (void)updateMergeUI;
 @end
+
+static void ylt_installCrashRecovery(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = ylt_crash_handler;
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
+    sigaction(SIGTRAP, &sa, NULL);
+    dispatch_source_t t = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(t, DISPATCH_TIME_NOW, 1.0 * NSEC_PER_SEC, 0.5 * NSEC_PER_SEC);
+    dispatch_source_set_event_handler(t, ^{
+        int sig = sigsetjmp(ylt_recovery_buf, 1);
+        if (sig) {
+            if (!ctrlBox) [Controller buildUI];
+            ensureOnTop();
+            if (bgTask == UIBackgroundTaskInvalid) startBgTask();
+            if (tapTimer && !running) dispatch_resume(tapTimer);
+        }
+    });
+    dispatch_resume(t);
+}
 
 #pragma mark - UDP IPC
 
