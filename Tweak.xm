@@ -6,6 +6,12 @@
 #import <arpa/inet.h>
 
 
+#pragma mark - Hooks
+
+%hook UIApplication
+- (BOOL)_isBackgroundTaskExpirationEnabled { return NO; }
+%end
+
 #pragma mark - Names
 
 static NSArray<NSString *> *accountNames = @[
