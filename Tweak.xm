@@ -37,14 +37,12 @@ static UIBackgroundTaskIdentifier bgTask = UIBackgroundTaskInvalid;
 #pragma mark - Helpers
 
 static UIWindow *activeWindow(void) {
-    if (@available(iOS 13.0, *))
-        for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
-            if ([s isKindOfClass:[UIWindowScene class]] && s.activationState == UISceneActivationStateForegroundActive)
-                { UIWindow *w = [(UIWindowScene *)s windows].firstObject; if (w && !w.hidden) return w; }
     for (UIWindow *w in UIApplication.sharedApplication.windows)
         if (!w.hidden && w.rootViewController) return w;
     for (UIWindow *w in UIApplication.sharedApplication.windows)
         if (!w.hidden) return w;
+    if (UIApplication.sharedApplication.windows.count > 0)
+        return UIApplication.sharedApplication.windows.firstObject;
     return nil;
 }
 
@@ -181,7 +179,6 @@ static void sendAll(NSString *msg) {
 + (void)doTapLocal {
     if (!tapCircle || !running) return;
     if (!tapCircle.superview) return;
-    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
 
     [UIView animateWithDuration:0.015 animations:^{
         tapCircle.transform = CGAffineTransformMakeScale(0.78, 0.78);
@@ -224,7 +221,6 @@ static void sendAll(NSString *msg) {
 }
 
 + (void)doTap {
-    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
     [self doTapLocal];
 }
 
@@ -595,8 +591,7 @@ __attribute__((constructor)) static void init() {
 
     ylt_installBgHook();
     udpInit();
-
-    dispatch_async(dispatch_get_main_queue(), ^{ [Controller buildUI]; });
+    dispatch_async(dispatch_get_main_queue(), ^{ startBgTask(); [Controller buildUI]; });
 
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         UIWindow *w = n.object;
