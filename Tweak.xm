@@ -7,6 +7,7 @@
 #import <objc/runtime.h>
 #import <substrate.h>
 #import <signal.h>
+#import <setjmp.h>
 #import <dlfcn.h>
 #import <pthread.h>
 
@@ -135,6 +136,7 @@ static void startBgTaskRenewal(void) {
         dispatch_source_t t = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), 10 * NSEC_PER_SEC, 2 * NSEC_PER_SEC);
         dispatch_source_set_event_handler(t, ^{
+            if (sigsetjmp(ylt_recover_jmp, 1)) return;
             if (bgTask != UIBackgroundTaskInvalid) {
                 [[UIApplication sharedApplication] endBackgroundTask:bgTask];
                 bgTask = UIBackgroundTaskInvalid;
@@ -305,7 +307,10 @@ static void sendAll(NSString *msg) {
     if (ms < 1) ms = 1;
     tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, (ms / 1000.0) * NSEC_PER_SEC, (ms / 1000.0) * NSEC_PER_SEC);
-    dispatch_source_set_event_handler(tapTimer, ^{ [self doTap]; });
+    dispatch_source_set_event_handler(tapTimer, ^{
+        if (!sigsetjmp(ylt_recover_jmp, 1))
+            [self doTap];
+    });
     dispatch_resume(tapTimer);
 }
 
@@ -381,6 +386,7 @@ static void sendAll(NSString *msg) {
         marqueeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(marqueeTimer, DISPATCH_TIME_NOW, (1.0/60.0) * NSEC_PER_SEC, (1.0/60.0) * NSEC_PER_SEC);
         dispatch_source_set_event_handler(marqueeTimer, ^{
+            if (sigsetjmp(ylt_recover_jmp, 1)) return;
             offset -= singleW / 1500.0;
             if (offset <= -singleW) offset += singleW;
             marqueeLbl.transform = CGAffineTransformMakeTranslation(offset, 0);
@@ -487,6 +493,7 @@ static void sendAll(NSString *msg) {
     rainbowTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(rainbowTimer, DISPATCH_TIME_NOW, 0.4 * NSEC_PER_SEC, 0);
     dispatch_source_set_event_handler(rainbowTimer, ^{
+        if (sigsetjmp(ylt_recover_jmp, 1)) return;
         if (!accentLine) return;
         hue += 1.0/16.0; if (hue > 1) hue -= 1;
         UIColor *c1 = [UIColor colorWithHue:hue saturation:1 brightness:1 alpha:0.8];
@@ -617,6 +624,12 @@ static void sendAll(NSString *msg) {
 
 #pragma mark - Constructor
 
+static sigjmp_buf ylt_recover_jmp;
+
+static void ylt_sigill_handler(int sig) {
+    siglongjmp(ylt_recover_jmp, 1);
+}
+
 __attribute__((constructor)) static void init() {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
@@ -624,6 +637,13 @@ __attribute__((constructor)) static void init() {
     signal(SIGABRT, SIG_IGN);
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
+
+    struct sigaction sa;
+    sa.sa_handler = ylt_sigill_handler;
+    sa.sa_flags = SA_NODEFER;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGILL, &sa, NULL);
+
     MSHookFunction((void *)&exit, (void *)ylt_hook_exit, (void **)&orig_exit);
     MSHookFunction((void *)&abort, (void *)ylt_hook_abort, (void **)&orig_abort);
     MSHookFunction((void *)&kill, (void *)ylt_hook_kill, (void **)&orig_kill);
@@ -641,11 +661,15 @@ __attribute__((constructor)) static void init() {
         [Controller buildUI];
         topTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
-        dispatch_source_set_event_handler(topTimer, ^{ ensureOnTop(); });
+        dispatch_source_set_event_handler(topTimer, ^{
+            if (!sigsetjmp(ylt_recover_jmp, 1))
+                ensureOnTop();
+        });
         dispatch_resume(topTimer);
         dispatch_source_t dismissTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(dismissTimer, DISPATCH_TIME_NOW, 0.15 * NSEC_PER_SEC, 0.05 * NSEC_PER_SEC);
         dispatch_source_set_event_handler(dismissTimer, ^{
+            if (sigsetjmp(ylt_recover_jmp, 1)) return;
             UIWindow *w = activeWindow();
             if (!w || !w.rootViewController) return;
             UIViewController *top = w.rootViewController;
