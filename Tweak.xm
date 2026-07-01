@@ -33,6 +33,8 @@ static BOOL running = NO;
 static BOOL isMain = YES;
 static CGFloat currentDelay = 200.0;
 static UIBackgroundTaskIdentifier bgTask = UIBackgroundTaskInvalid;
+static BOOL pendingPos = NO;
+static CGFloat pendX = 0, pendY = 0;
 
 #pragma mark - Helpers
 
@@ -109,10 +111,15 @@ static int darwinStopToken = 0;
 
 static void darwinInit(void) {
     notify_register_dispatch("com.yltool.pos", &darwinPosToken, dispatch_get_main_queue(), ^(int t) {
-        if (!tapCircle || !tapCircle.superview) return;
         uint64_t state;
         notify_get_state(t, &state);
-        tapCircle.center = CGPointMake((CGFloat)(state >> 32) / 10.0, (CGFloat)(state & 0xFFFFFFFF) / 10.0);
+        CGFloat x = (CGFloat)(state >> 32) / 10.0;
+        CGFloat y = (CGFloat)(state & 0xFFFFFFFF) / 10.0;
+        if (tapCircle && tapCircle.superview) {
+            tapCircle.center = CGPointMake(x, y);
+        } else {
+            pendingPos = YES; pendX = x; pendY = y;
+        }
     });
     notify_register_dispatch("com.yltool.run", &darwinRunToken, dispatch_get_main_queue(), ^(int t) {
         if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
@@ -171,8 +178,14 @@ static void udpInit(void) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     if ([m hasPrefix:@"POS:"]) {
                         NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                        if (p.count == 2 && tapCircle && tapCircle.superview)
-                            tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                        if (p.count == 2) {
+                            CGFloat x = [p[0] floatValue], y = [p[1] floatValue];
+                            if (tapCircle && tapCircle.superview) {
+                                tapCircle.center = CGPointMake(x, y);
+                            } else {
+                                pendingPos = YES; pendX = x; pendY = y;
+                            }
+                        }
                     } else if ([m isEqualToString:@"RUN"]) {
                         if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
                     } else if ([m isEqualToString:@"STOP"]) {
@@ -488,9 +501,9 @@ static void sendAll(NSString *msg) {
     [w addSubview:tapCircle];
     [w bringSubviewToFront:tapCircle];
 
+    if (pendingPos) { pendingPos = NO; tapCircle.center = CGPointMake(pendX, pendY); }
+
     [self updateMergeUI];
-    darwinInit();
-    udpInit();
     [self startRainbow];
     NSLog(@"[YLT] UI ready");
 }
@@ -652,6 +665,8 @@ __attribute__((constructor)) static void init() {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
     NSLog(@"[YLT] Loading...");
+    darwinInit();
+    udpInit();
     dispatch_async(dispatch_get_main_queue(), ^{ [Controller buildUI]; });
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         UIWindow *w = n.object;
