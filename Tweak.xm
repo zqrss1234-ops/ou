@@ -30,7 +30,6 @@ static dispatch_source_t tapTimer = NULL;
 static dispatch_source_t topTimer = NULL;
 static dispatch_source_t rainbowTimer = NULL;
 static dispatch_source_t marqueeTimer = NULL;
-static dispatch_source_t ipcTimer = NULL;
 static CAGradientLayer *accentLine = nil;
 static BOOL running = NO;
 static BOOL isMain = YES;
