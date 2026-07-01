@@ -1,6 +1,5 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
-#import <notify.h>
 #import <sys/socket.h>
 #import <sys/select.h>
 #import <netinet/in.h>
@@ -34,9 +33,6 @@ static BOOL running = NO;
 static BOOL isMain = YES;
 static CGFloat currentDelay = 100.0;
 static UIBackgroundTaskIdentifier bgTask = UIBackgroundTaskInvalid;
-
-static int dnRunToken = NOTIFY_TOKEN_INVALID;
-static int dnPosToken = NOTIFY_TOKEN_INVALID;
 
 #pragma mark - Helpers
 
@@ -106,63 +102,27 @@ static void ylt_installBgHook(void) {
 + (void)updateMergeUI;
 @end
 
-#pragma mark - Darwin IPC (kernel-level, cross-process, no sandbox)
-
-static void dnWriteRun(BOOL on) {
-    notify_set_state(dnRunToken, on ? 1 : 0);
-    notify_post("com.yltool.run");
-}
-
-static void dnWritePos(CGFloat x, CGFloat y) {
-    uint32_t ix = (uint32_t)(x * 10.0);
-    uint32_t iy = (uint32_t)(y * 10.0);
-    notify_set_state(dnPosToken, ((uint64_t)ix << 32) | iy);
-    notify_post("com.yltool.pos");
-}
-
-#pragma mark - IPC Poll (reads Darwin state, 100ms)
-
-static void pollIpc(void) {
-    int check = 0;
-    uint64_t state = 0;
-
-    notify_check(dnRunToken, &check);
-    if (check) {
-        notify_get_state(dnRunToken, &state);
-        BOOL shouldRun = (state != 0);
-        if (shouldRun != running) {
-            running = shouldRun;
-            if (running) [Tapper start]; else [Tapper stop];
-            [Controller updateRunUI];
-        }
-    }
-
-    notify_check(dnPosToken, &check);
-    if (check) {
-        notify_get_state(dnPosToken, &state);
-        CGFloat px = (CGFloat)((state >> 32) & 0xFFFFFFFF) / 10.0;
-        CGFloat py = (CGFloat)(state & 0xFFFFFFFF) / 10.0;
-        if (tapCircle && tapCircle.superview)
-            tapCircle.center = CGPointMake(px, py);
-    }
-}
-
-#pragma mark - UDP IPC
+#pragma mark - UDP IPC (each copy = unique port, send to all ports 51551-51560)
 
 static int udpSock = -1;
+static int myPort = 0;
+#define UDP_MIN 51551
+#define UDP_MAX 51560
 
 static void udpInit(void) {
     udpSock = socket(AF_INET, SOCK_DGRAM, 0);
     if (udpSock < 0) return;
     int opt = 1;
     setsockopt(udpSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    setsockopt(udpSock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(51551);
-    addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(udpSock, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(udpSock); udpSock = -1; return; }
+    for (int p = UDP_MIN; p <= UDP_MAX; p++) {
+        struct sockaddr_in a;
+        memset(&a, 0, sizeof(a));
+        a.sin_family = AF_INET;
+        a.sin_port = htons(p);
+        a.sin_addr.s_addr = INADDR_ANY;
+        if (bind(udpSock, (struct sockaddr *)&a, sizeof(a)) == 0) { myPort = p; break; }
+    }
+    if (myPort == 0) { close(udpSock); udpSock = -1; return; }
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
         char buf[256];
         fd_set fds;
@@ -171,7 +131,7 @@ static void udpInit(void) {
             @autoreleasepool {
                 FD_ZERO(&fds);
                 FD_SET(udpSock, &fds);
-                tv.tv_sec = 0; tv.tv_usec = 50000;
+                tv.tv_sec = 0; tv.tv_usec = 10000;
                 if (select(udpSock+1, &fds, NULL, NULL, &tv) <= 0) continue;
                 struct sockaddr_in from;
                 socklen_t flen = sizeof(from);
@@ -179,16 +139,17 @@ static void udpInit(void) {
                 if (n <= 0) continue;
                 buf[n] = 0;
                 NSString *m = [NSString stringWithUTF8String:buf];
-                if ([m hasPrefix:@"POS:"]) {
-                    NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                    if (p.count == 2) {
-                        dnWritePos([p[0] floatValue], [p[1] floatValue]);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if ([m hasPrefix:@"POS:"]) {
+                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
+                        if (p.count == 2 && tapCircle && tapCircle.superview)
+                            tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                    } else if ([m isEqualToString:@"RUN"]) {
+                        if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
+                    } else if ([m isEqualToString:@"STOP"]) {
+                        if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
                     }
-                } else if ([m isEqualToString:@"RUN"]) {
-                    dnWriteRun(YES);
-                } else if ([m isEqualToString:@"STOP"]) {
-                    dnWriteRun(NO);
-                }
+                });
             }
         }
     });
@@ -196,25 +157,20 @@ static void udpInit(void) {
 
 static void udpSend(NSString *m) {
     if (udpSock < 0) return;
+    const char *c = m.UTF8String; size_t l = m.length;
     struct sockaddr_in sa;
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
-    sa.sin_port = htons(51551);
-    inet_aton("255.255.255.255", &sa.sin_addr);
-    sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&sa, sizeof(sa));
-    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&sa, sizeof(sa));
+    inet_aton("127.0.0.1", &sa.sin_addr);
+    for (int p = UDP_MIN; p <= UDP_MAX; p++) {
+        sa.sin_port = htons(p);
+        sendto(udpSock, c, l, 0, (struct sockaddr *)&sa, sizeof(sa));
+    }
 }
 
 #pragma mark - Universal Send
 
 static void sendAll(NSString *msg) {
-    if ([msg isEqualToString:@"RUN"]) dnWriteRun(YES);
-    else if ([msg isEqualToString:@"STOP"]) dnWriteRun(NO);
-    else if ([msg hasPrefix:@"POS:"]) {
-        NSArray *p = [[msg substringFromIndex:4] componentsSeparatedByString:@","];
-        if (p.count == 2) dnWritePos([p[0] floatValue], [p[1] floatValue]);
-    }
     udpSend(msg);
 }
 
@@ -638,14 +594,6 @@ __attribute__((constructor)) static void init() {
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
 
     ylt_installBgHook();
-
-    notify_register_check("com.yltool.run", &dnRunToken);
-    notify_register_check("com.yltool.pos", &dnPosToken);
-    notify_set_state(dnRunToken, 0);
-    notify_set_state(dnPosToken, 0);
-    notify_post("com.yltool.run");
-    notify_post("com.yltool.pos");
-
     udpInit();
 
     dispatch_async(dispatch_get_main_queue(), ^{ [Controller buildUI]; });
@@ -679,9 +627,5 @@ __attribute__((constructor)) static void init() {
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
         dispatch_source_set_event_handler(topTimer, ^{ ensureOnTop(); });
         dispatch_resume(topTimer);
-        dispatch_source_t ipcPoll = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-        dispatch_source_set_timer(ipcPoll, DISPATCH_TIME_NOW, 0.1 * NSEC_PER_SEC, 0.05 * NSEC_PER_SEC);
-        dispatch_source_set_event_handler(ipcPoll, ^{ pollIpc(); });
-        dispatch_resume(ipcPoll);
     });
 }
