@@ -116,12 +116,22 @@ static void ylt_hook_presentVC(id self, SEL _cmd, id vc, BOOL animated, void(^co
     orig_presentVC(self, _cmd, vc, animated, completion);
 }
 
+static void (*orig_terminate)(id, SEL);
+static void ylt_hook_terminate(id self, SEL _cmd) {}
+
+static void (*orig_suspend)(id, SEL);
+static void ylt_hook_suspend(id self, SEL _cmd) {}
+
 static void ylt_installHooks(void) {
     Class app = objc_getClass("UIApplication");
     Method m = class_getInstanceMethod(app, sel_registerName("_isBackgroundTaskExpirationEnabled"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_isBacEnabled);
     m = class_getInstanceMethod(app, @selector(applicationState));
     if (m) method_setImplementation(m, (IMP)ylt_hook_appState);
+    m = class_getInstanceMethod(app, @selector(terminateWithSuccess));
+    if (m) { orig_terminate = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)ylt_hook_terminate); }
+    m = class_getInstanceMethod(app, sel_registerName("suspend"));
+    if (m) { orig_suspend = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)ylt_hook_suspend); }
     m = class_getInstanceMethod([UIViewController class], @selector(presentViewController:animated:completion:));
     if (m) {
         orig_presentVC = (void *)method_getImplementation(m);
