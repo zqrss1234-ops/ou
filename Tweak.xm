@@ -70,7 +70,7 @@ static void ensureOnTop(void) {
     }
 }
 
-#pragma mark - Background Task (BacRunner)
+#pragma mark - Background Task
 
 static void startBgTask(void) {
     if (bgTask != UIBackgroundTaskInvalid) return;
@@ -81,16 +81,10 @@ static void startBgTask(void) {
             startBgTask();
         });
     }];
-    if (task != UIBackgroundTaskInvalid) {
-        bgTask = task;
-    }
+    if (task != UIBackgroundTaskInvalid) bgTask = task;
 }
 
-#pragma mark - bgTask Expiration Hook (via runtime, 0% crash risk)
-
-static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) {
-    return NO;
-}
+static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
 
 static void ylt_installBgHook(void) {
     Method m = class_getInstanceMethod(objc_getClass("UIApplication"), @selector(_isBackgroundTaskExpirationEnabled));
@@ -112,32 +106,7 @@ static void ylt_installBgHook(void) {
 + (void)updateMergeUI;
 @end
 
-#pragma mark - Darwin IPC (cross-process via kernel, no sandbox)
-
-static void dnInit(void) {
-    notify_register_dispatch("com.yltool.run", &dnRunToken, dispatch_get_main_queue(), ^(int token) {
-        uint64_t s = 0;
-        notify_get_state(token, &s);
-        BOOL shouldRun = (s != 0);
-        if (shouldRun != running) {
-            running = shouldRun;
-            if (running) { [Tapper start]; } else { [Tapper stop]; }
-            [Controller updateRunUI];
-        }
-    });
-    notify_register_dispatch("com.yltool.pos", &dnPosToken, dispatch_get_main_queue(), ^(int token) {
-        uint64_t s = 0;
-        notify_get_state(token, &s);
-        CGFloat x = (CGFloat)((s >> 32) & 0xFFFFFFFF) / 10.0;
-        CGFloat y = (CGFloat)(s & 0xFFFFFFFF) / 10.0;
-        if (tapCircle && tapCircle.superview)
-            tapCircle.center = CGPointMake(x, y);
-    });
-    notify_set_state(dnRunToken, 0);
-    notify_set_state(dnPosToken, 0);
-    notify_post("com.yltool.run");
-    notify_post("com.yltool.pos");
-}
+#pragma mark - Darwin IPC (kernel-level, cross-process, no sandbox)
 
 static void dnWriteRun(BOOL on) {
     notify_set_state(dnRunToken, on ? 1 : 0);
@@ -151,7 +120,34 @@ static void dnWritePos(CGFloat x, CGFloat y) {
     notify_post("com.yltool.pos");
 }
 
-#pragma mark - UDP IPC (cross-device)
+#pragma mark - IPC Poll (reads Darwin state, 100ms)
+
+static void pollIpc(void) {
+    int check = 0;
+    uint64_t state = 0;
+
+    notify_check(dnRunToken, &check);
+    if (check) {
+        notify_get_state(dnRunToken, &state);
+        BOOL shouldRun = (state != 0);
+        if (shouldRun != running) {
+            running = shouldRun;
+            if (running) [Tapper start]; else [Tapper stop];
+            [Controller updateRunUI];
+        }
+    }
+
+    notify_check(dnPosToken, &check);
+    if (check) {
+        notify_get_state(dnPosToken, &state);
+        CGFloat px = (CGFloat)((state >> 32) & 0xFFFFFFFF) / 10.0;
+        CGFloat py = (CGFloat)(state & 0xFFFFFFFF) / 10.0;
+        if (tapCircle && tapCircle.superview)
+            tapCircle.center = CGPointMake(px, py);
+    }
+}
+
+#pragma mark - UDP IPC
 
 static int udpSock = -1;
 
@@ -186,9 +182,7 @@ static void udpInit(void) {
                 if ([m hasPrefix:@"POS:"]) {
                     NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
                     if (p.count == 2) {
-                        CGFloat fx = [p[0] floatValue];
-                        CGFloat fy = [p[1] floatValue];
-                        dnWritePos(fx, fy);
+                        dnWritePos([p[0] floatValue], [p[1] floatValue]);
                     }
                 } else if ([m isEqualToString:@"RUN"]) {
                     dnWriteRun(YES);
@@ -212,34 +206,12 @@ static void udpSend(NSString *m) {
     sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&sa, sizeof(sa));
 }
 
-#pragma mark - IPC Poll Fallback (reads Darwin state directly, bypasses callback issues)
-
-static void pollIpc(void) {
-    uint64_t runState = 0;
-    notify_get_state(dnRunToken, &runState);
-    BOOL shouldRun = (runState != 0);
-    if (shouldRun != running) {
-        running = shouldRun;
-        if (running) { [Tapper start]; } else { [Tapper stop]; }
-        [Controller updateRunUI];
-    }
-
-    uint64_t posState = 0;
-    notify_get_state(dnPosToken, &posState);
-    CGFloat px = (CGFloat)((posState >> 32) & 0xFFFFFFFF) / 10.0;
-    CGFloat py = (CGFloat)(posState & 0xFFFFFFFF) / 10.0;
-    if (tapCircle && tapCircle.superview)
-        tapCircle.center = CGPointMake(px, py);
-}
-
 #pragma mark - Universal Send
 
 static void sendAll(NSString *msg) {
-    if ([msg isEqualToString:@"RUN"]) {
-        dnWriteRun(YES);
-    } else if ([msg isEqualToString:@"STOP"]) {
-        dnWriteRun(NO);
-    } else if ([msg hasPrefix:@"POS:"]) {
+    if ([msg isEqualToString:@"RUN"]) dnWriteRun(YES);
+    else if ([msg isEqualToString:@"STOP"]) dnWriteRun(NO);
+    else if ([msg hasPrefix:@"POS:"]) {
         NSArray *p = [[msg substringFromIndex:4] componentsSeparatedByString:@","];
         if (p.count == 2) dnWritePos([p[0] floatValue], [p[1] floatValue]);
     }
@@ -334,9 +306,8 @@ static void sendAll(NSString *msg) {
     CGFloat sh = UIScreen.mainScreen.bounds.size.height;
 
     NSString *marqueeTxt = @"";
-    for (NSString *n in accountNames) {
+    for (NSString *n in accountNames)
         marqueeTxt = [marqueeTxt stringByAppendingFormat:@"  ◉  %@", n];
-    }
 
     CGFloat bw = 230, bh = 210, bx = (sw-bw)/2, by = sh * 0.12;
     ctrlBox = [[UIView alloc] initWithFrame:CGRectMake(bx, by, bw, bh)];
@@ -374,7 +345,6 @@ static void sendAll(NSString *msg) {
     marqueeBox.clipsToBounds = YES;
     marqueeBox.layer.borderColor = rgba(60, 60, 100, 0.15).CGColor;
     marqueeBox.layer.borderWidth = 0.5;
-
     marqueeLbl = [[UILabel alloc] init];
     CGSize singleSz = [marqueeTxt sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12 weight:UIFontWeightBold]}];
     CGFloat singleW = singleSz.width + 24;
@@ -452,14 +422,12 @@ static void sendAll(NSString *msg) {
     mergeRow.layer.cornerRadius = 16;
     mergeRow.layer.borderColor = rgba(60, 200, 100, 0.15).CGColor;
     mergeRow.layer.borderWidth = 0.5;
-
     mergeDot = [[UIView alloc] initWithFrame:CGRectMake(10, 11, 10, 10)];
     mergeDot.layer.cornerRadius = 5;
     mergeDot.userInteractionEnabled = NO;
     mergeDot.backgroundColor = rgba(120, 130, 160, 0.3);
     mergeDot.tag = 500;
     [mergeRow addSubview:mergeDot];
-
     mergeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     mergeBtn.frame = CGRectMake(26, 0, mergeRow.frame.size.width-32, 32);
     mergeBtn.backgroundColor = [UIColor clearColor];
@@ -602,13 +570,8 @@ static void sendAll(NSString *msg) {
 + (void)toggleRun {
     running = !running;
     [self updateRunUI];
-    if (running) {
-        [Tapper start];
-        sendAll(@"RUN");
-    } else {
-        [Tapper stop];
-        sendAll(@"STOP");
-    }
+    if (running) { [Tapper start]; sendAll(@"RUN"); }
+    else { [Tapper stop]; sendAll(@"STOP"); }
 }
 
 + (void)speedChange {
@@ -622,10 +585,7 @@ static void sendAll(NSString *msg) {
 + (void)hideAll {
     ctrlBox.hidden = YES;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (ctrlBox.hidden) {
-            ctrlBox.hidden = NO;
-            ensureOnTop();
-        }
+        if (ctrlBox.hidden) { ctrlBox.hidden = NO; ensureOnTop(); }
     });
 }
 
@@ -679,8 +639,15 @@ __attribute__((constructor)) static void init() {
 
     ylt_installBgHook();
 
-    dnInit();
+    notify_register_check("com.yltool.run", &dnRunToken);
+    notify_register_check("com.yltool.pos", &dnPosToken);
+    notify_set_state(dnRunToken, 0);
+    notify_set_state(dnPosToken, 0);
+    notify_post("com.yltool.run");
+    notify_post("com.yltool.pos");
+
     udpInit();
+
     dispatch_async(dispatch_get_main_queue(), ^{ [Controller buildUI]; });
 
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
