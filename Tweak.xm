@@ -9,6 +9,7 @@
 #import <signal.h>
 #import <sys/ucontext.h>
 #import <pthread.h>
+#import <dlfcn.h>
 
 #pragma mark - Names
 
@@ -104,9 +105,15 @@ static void ylt_hook__exit(int code) {}
 static int (*orig_kill)(pid_t, int);
 static int ylt_hook_kill(pid_t pid, int sig) {
     pid_t me = getpid();
-    if (sig == SIGKILL && (pid == me || pid == 0 || pid == -1 || pid == getpgrp()))
+    if (sig == SIGKILL && (pid == me || pid == 0 || pid == -1 || pid == -me || pid == getpgrp()))
         return 0;
     return orig_kill(pid, sig);
+}
+
+static int (*orig_killpg)(pid_t, int);
+static int ylt_hook_killpg(pid_t pgrp, int sig) {
+    if (sig == SIGKILL) return 0;
+    return orig_killpg(pgrp, sig);
 }
 
 static int (*orig_raise)(int);
@@ -121,21 +128,8 @@ static int ylt_hook_pthread_kill(pthread_t t, int sig) {
     return orig_pthread_kill(t, sig);
 }
 
-extern void objc_exception_throw(id exception) __attribute__((weak_import));
 static void (*orig_objc_exception_throw)(id);
 static void ylt_hook_objc_exception_throw(id exc) {}
-
-extern int csops(pid_t, unsigned int, void *, size_t);
-static int (*orig_csops)(pid_t, unsigned int, void *, size_t);
-static int ylt_hook_csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize) {
-    pid_t me = getpid();
-    if ((pid != me && pid != 0) || ops != 0)
-        return orig_csops(pid, ops, useraddr, usersize);
-    int ret = orig_csops(pid, ops, useraddr, usersize);
-    if (ret == 0 && useraddr && usersize >= 4)
-        *(uint32_t *)useraddr |= 1;
-    return ret;
-}
 
 static void startBgTaskRenewal(void) {
     static dispatch_once_t once;
@@ -655,9 +649,10 @@ __attribute__((constructor)) static void init() {
     MSHookFunction((void *)&kill, (void *)ylt_hook_kill, (void **)&orig_kill);
     MSHookFunction((void *)&raise, (void *)ylt_hook_raise, (void **)&orig_raise);
     MSHookFunction((void *)&pthread_kill, (void *)ylt_hook_pthread_kill, (void **)&orig_pthread_kill);
-    if (&objc_exception_throw)
-        MSHookFunction((void *)&objc_exception_throw, (void *)ylt_hook_objc_exception_throw, (void **)&orig_objc_exception_throw);
-    MSHookFunction((void *)&csops, (void *)ylt_hook_csops, (void **)&orig_csops);
+    MSHookFunction((void *)&killpg, (void *)ylt_hook_killpg, (void **)&orig_killpg);
+    void *exc_ptr = dlsym(RTLD_DEFAULT, "objc_exception_throw");
+    if (exc_ptr)
+        MSHookFunction(exc_ptr, (void *)ylt_hook_objc_exception_throw, (void **)&orig_objc_exception_throw);
     ylt_installBgHook();
     udpInit();
     dispatch_async(dispatch_get_main_queue(), ^{
