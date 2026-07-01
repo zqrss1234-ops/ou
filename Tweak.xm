@@ -1,4 +1,4 @@
-﻿#import <UIKit/UIKit.h>
+#import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <sys/socket.h>
 #import <sys/select.h>
@@ -9,14 +9,13 @@
 #import <signal.h>
 #import <dlfcn.h>
 #import <pthread.h>
-#import <unistd.h>
 
 #pragma mark - Names
 
 static NSArray<NSString *> *accountNames = @[
-    @"╪╣╪¿╪»╪º┘ä╪Ñ┘ä┘ç", @"╪┤╪º╪▒┘ê", @"┘ä╪¡┘ä┘ê╪¡", @"╪│╪╣┘è╪»",
-    @"╪º╪¿┘ê┘à╪¬╪╣╪¿", @"┘â┘å┘é ╪º┘ä╪┤╪▒┘é", @"╪¡╪º╪¬┘à",
-    @"╪º┘ä┘â╪º┘è╪»", @"╪º┘ä╪┤┘à╪º┘à╪▒┘ç", @"╪º┘ä┘ç╪¿╪º╪│"
+    @"عبدالإله", @"شارو", @"لحلوح", @"سعيد",
+    @"ابومتعب", @"كنق الشرق", @"حاتم",
+    @"الكايد", @"الشمامره", @"الهباس"
 ];
 
 #pragma mark - State
@@ -100,6 +99,9 @@ static void ylt_hook_exit(int code) {}
 
 static void (*orig_abort)(void);
 static void ylt_hook_abort(void) {}
+
+static void (*orig__exit)(int);
+static void ylt_hook__exit(int code) {}
 
 static int (*orig_kill)(pid_t, int);
 static int ylt_hook_kill(pid_t pid, int sig) {
@@ -335,7 +337,7 @@ static void sendAll(NSString *msg) {
 
     NSString *marqueeTxt = @"";
     for (NSString *n in accountNames)
-        marqueeTxt = [marqueeTxt stringByAppendingFormat:@"  Γùë  %@", n];
+        marqueeTxt = [marqueeTxt stringByAppendingFormat:@"  ◉  %@", n];
 
     CGFloat bw = 230, bh = 210, bx = (sw-bw)/2, by = sh * 0.12;
     ctrlBox = [[UIView alloc] initWithFrame:CGRectMake(bx, by, bw, bh)];
@@ -391,11 +393,11 @@ static void sendAll(NSString *msg) {
     yy += 40;
 
     UILabel *spLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, yy, 90, 14)];
-    spLbl.text = @"╪│╪▒╪╣╪⌐ ╪º┘ä┘å┘é╪▒"; spLbl.textColor = rgba(150, 160, 190, 0.65);
+    spLbl.text = @"سرعة النقر"; spLbl.textColor = rgba(150, 160, 190, 0.65);
     spLbl.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
     [ctrlBox addSubview:spLbl];
     delayLabel = [[UILabel alloc] initWithFrame:CGRectMake(bw-95, yy, 80, 14)];
-    delayLabel.text = @"0.10 ╪½"; delayLabel.textColor = rgba(100, 180, 255, 0.85);
+    delayLabel.text = @"0.10 ث"; delayLabel.textColor = rgba(100, 180, 255, 0.85);
     delayLabel.font = [UIFont fontWithName:@"Menlo-Bold" size:11] ?: [UIFont boldSystemFontOfSize:11];
     delayLabel.textAlignment = NSTextAlignmentRight;
     [ctrlBox addSubview:delayLabel];
@@ -415,7 +417,7 @@ static void sendAll(NSString *msg) {
     runBtn.frame = CGRectMake(10, yy, (bw-26)*0.62, 38);
     runBtn.backgroundColor = rgba(40, 100, 230, 1); runBtn.layer.cornerRadius = 16;
     runBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [runBtn setTitle:@"Γû╢  ╪¬╪┤╪║┘è┘ä" forState:UIControlStateNormal];
+    [runBtn setTitle:@"▶  تشغيل" forState:UIControlStateNormal];
     [runBtn setTitleColor:rgba(220, 230, 255, 1) forState:UIControlStateNormal];
     [runBtn addTarget:self action:@selector(toggleRun) forControlEvents:UIControlEventTouchUpInside];
     [ctrlBox addSubview:runBtn];
@@ -423,7 +425,7 @@ static void sendAll(NSString *msg) {
     hideBtn.frame = CGRectMake(CGRectGetMaxX(runBtn.frame)+6, yy, (bw-26)*0.38, 38);
     hideBtn.backgroundColor = rgba(35, 35, 55, 0.7); hideBtn.layer.cornerRadius = 16;
     hideBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-    [hideBtn setTitle:@"Γ£ò ╪Ñ╪«┘ü╪º╪í" forState:UIControlStateNormal];
+    [hideBtn setTitle:@"✕ إخفاء" forState:UIControlStateNormal];
     [hideBtn setTitleColor:rgba(150, 160, 190, 0.9) forState:UIControlStateNormal];
     [hideBtn addTarget:self action:@selector(hideAll) forControlEvents:UIControlEventTouchUpInside];
     [ctrlBox addSubview:hideBtn];
@@ -441,7 +443,7 @@ static void sendAll(NSString *msg) {
     mergeBtn.backgroundColor = [UIColor clearColor];
     mergeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
     mergeBtn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    [mergeBtn setTitle:@"  ╪»┘à╪¼ ╪º┘ä╪¡╪│╪º╪¿╪º╪¬" forState:UIControlStateNormal];
+    [mergeBtn setTitle:@"  دمج الحسابات" forState:UIControlStateNormal];
     [mergeBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
     [mergeBtn addTarget:self action:@selector(toggleMerge) forControlEvents:UIControlEventTouchUpInside];
     [mergeRow addSubview:mergeBtn];
@@ -449,7 +451,7 @@ static void sendAll(NSString *msg) {
     yy += 38;
 
     UILabel *footer = [[UILabel alloc] initWithFrame:CGRectMake(0, yy, bw, bh-yy-2)];
-    footer.text = @"╪¡┘é┘ê┘é ╪╣╪¿╪»╪º┘ä╪Ñ┘ä┘ç"; footer.textColor = rgba(80, 90, 120, 0.3);
+    footer.text = @"حقوق عبدالإله"; footer.textColor = rgba(80, 90, 120, 0.3);
     footer.font = [UIFont systemFontOfSize:7 weight:UIFontWeightLight];
     footer.textAlignment = NSTextAlignmentCenter;
     [ctrlBox addSubview:footer];
@@ -524,10 +526,10 @@ static void sendAll(NSString *msg) {
     [UIView animateWithDuration:0.2 animations:^{
         if (running) {
             runBtn.backgroundColor = rgba(200, 60, 60, 1);
-            [runBtn setTitle:@"Γûá  ╪Ñ┘è┘é╪º┘ü" forState:UIControlStateNormal];
+            [runBtn setTitle:@"■  إيقاف" forState:UIControlStateNormal];
         } else {
             runBtn.backgroundColor = rgba(40, 100, 230, 1);
-            [runBtn setTitle:@"Γû╢  ╪¬╪┤╪║┘è┘ä" forState:UIControlStateNormal];
+            [runBtn setTitle:@"▶  تشغيل" forState:UIControlStateNormal];
         }
     }];
 }
@@ -536,10 +538,10 @@ static void sendAll(NSString *msg) {
     if (!mergeBtn) return;
     [UIView animateWithDuration:0.2 animations:^{
         if (isMain) {
-            [mergeBtn setTitle:@"  ╪¬┘à ╪»┘à╪¼ ╪º┘ä╪¡╪│╪º╪¿╪º╪¬ Γ£ô" forState:UIControlStateNormal];
+            [mergeBtn setTitle:@"  تم دمج الحسابات ✓" forState:UIControlStateNormal];
             [mergeBtn setTitleColor:rgba(100, 255, 150, 1) forState:UIControlStateNormal];
         } else {
-            [mergeBtn setTitle:@"  ╪»┘à╪¼ ╪º┘ä╪¡╪│╪º╪¿╪º╪¬" forState:UIControlStateNormal];
+            [mergeBtn setTitle:@"  دمج الحسابات" forState:UIControlStateNormal];
             [mergeBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
         }
     }];
@@ -550,7 +552,7 @@ static void sendAll(NSString *msg) {
 + (void)toggleMerge {
     isMain = !isMain; [self updateMergeUI];
     if (isMain) {
-        [self alert:@"╪¬┘à ╪»┘à╪¼ ╪º┘ä╪¡╪│╪º╪¿╪º╪¬ Γ£ô" msg:@"╪¼┘à┘è╪╣ ╪º┘ä┘å╪│╪« ╪│╪¬╪¬╪¿╪╣ ┘ç╪░┘ç ╪º┘ä┘å╪│╪«╪⌐"];
+        [self alert:@"تم دمج الحسابات ✓" msg:@"جميع النسخ ستتبع هذه النسخة"];
         if (tapCircle) sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         if (running) sendAll(@"RUN");
     }
@@ -565,7 +567,7 @@ static void sendAll(NSString *msg) {
 + (void)speedChange {
     CGFloat v = delaySlider.value;
     delaySlider.value = v; currentDelay = v;
-    delayLabel.text = [NSString stringWithFormat:@"%.2f ╪½", v / 1000.0];
+    delayLabel.text = [NSString stringWithFormat:@"%.2f ث", v / 1000.0];
     if (running) { [Tapper stop]; [Tapper start]; }
 }
 
@@ -600,7 +602,7 @@ static void sendAll(NSString *msg) {
     if (g.state == UIGestureRecognizerStateBegan) {
         isMain = !isMain; [self updateMergeUI];
         if (isMain) {
-            [self alert:@"Γ£ô ╪▒╪ª┘è╪│┘è" msg:@"╪º┘ä┘å╪│╪«╪⌐ ╪º┘ä╪▒╪ª┘è╪│┘è╪⌐ - ╪¬╪¬╪¡┘â┘à ╪¿╪¼┘à┘è╪╣ ╪º┘ä┘å╪│╪«"];
+            [self alert:@"✓ رئيسي" msg:@"النسخة الرئيسية - تتحكم بجميع النسخ"];
             if (tapCircle) sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         }
     }
@@ -625,7 +627,9 @@ __attribute__((constructor)) static void init() {
     signal(SIGABRT, SIG_IGN);
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
+    signal(SIGILL, SIG_IGN);
     MSHookFunction((void *)&exit, (void *)ylt_hook_exit, (void **)&orig_exit);
+    MSHookFunction((void *)&_exit, (void *)ylt_hook__exit, (void **)&orig__exit);
     MSHookFunction((void *)&abort, (void *)ylt_hook_abort, (void **)&orig_abort);
     MSHookFunction((void *)&kill, (void *)ylt_hook_kill, (void **)&orig_kill);
     MSHookFunction((void *)&raise, (void *)ylt_hook_raise, (void **)&orig_raise);
@@ -655,6 +659,11 @@ __attribute__((constructor)) static void init() {
                 [top dismissViewControllerAnimated:NO completion:nil];
         });
         dispatch_resume(dismissTimer);
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+            if (ctrlBox) { [ctrlBox removeFromSuperview]; ctrlBox = nil; }
+            if (tapCircle) { [tapCircle removeFromSuperview]; tapCircle = nil; }
+            [Controller buildUI];
+        }];
     });
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         UIWindow *w = n.object;
@@ -682,4 +691,3 @@ __attribute__((constructor)) static void init() {
         ensureOnTop();
     }];
 }
-
