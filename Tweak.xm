@@ -31,7 +31,7 @@ static dispatch_source_t marqueeTimer = NULL;
 static CAGradientLayer *accentLine = nil;
 static BOOL running = NO;
 static BOOL isMain = YES;
-static CGFloat currentDelay = 200.0;
+static CGFloat currentDelay = 100.0;
 static UIBackgroundTaskIdentifier bgTask = UIBackgroundTaskInvalid;
 static BOOL pendingPos = NO;
 static CGFloat pendX = 0, pendY = 0;
@@ -105,35 +105,16 @@ static void startBgTask(void) {
 
 #pragma mark - Darwin IPC
 
-static int darwinPosToken = 0;
 static int darwinRunToken = 0;
 static int darwinStopToken = 0;
 
 static void darwinInit(void) {
-    notify_register_dispatch("com.yltool.pos", &darwinPosToken, dispatch_get_main_queue(), ^(int t) {
-        uint64_t state;
-        notify_get_state(t, &state);
-        CGFloat x = (CGFloat)(state >> 32) / 10.0;
-        CGFloat y = (CGFloat)(state & 0xFFFFFFFF) / 10.0;
-        if (tapCircle && tapCircle.superview) {
-            tapCircle.center = CGPointMake(x, y);
-        } else {
-            pendingPos = YES; pendX = x; pendY = y;
-        }
-    });
     notify_register_dispatch("com.yltool.run", &darwinRunToken, dispatch_get_main_queue(), ^(int t) {
         if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
     });
     notify_register_dispatch("com.yltool.stop", &darwinStopToken, dispatch_get_main_queue(), ^(int t) {
         if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
     });
-}
-
-static void darwinPostPos(CGFloat x, CGFloat y) {
-    if (!darwinPosToken) return;
-    uint64_t state = ((uint64_t)(uint32_t)(x * 10) << 32) | (uint64_t)(uint32_t)(y * 10);
-    notify_set_state(darwinPosToken, state);
-    notify_post("com.yltool.pos");
 }
 
 static void darwinPost(const char *name) {
@@ -212,10 +193,7 @@ static void udpSend(NSString *m) {
 #pragma mark - Universal Send
 
 static void sendAll(NSString *msg) {
-    if ([msg hasPrefix:@"POS:"]) {
-        NSArray *p = [[msg substringFromIndex:4] componentsSeparatedByString:@","];
-        if (p.count == 2) darwinPostPos([p[0] floatValue], [p[1] floatValue]);
-    } else if ([msg isEqualToString:@"RUN"]) {
+    if ([msg isEqualToString:@"RUN"]) {
         darwinPost("com.yltool.run");
     } else if ([msg isEqualToString:@"STOP"]) {
         darwinPost("com.yltool.stop");
@@ -280,7 +258,7 @@ static void sendAll(NSString *msg) {
 + (void)start {
     if (tapTimer) return;
     CGFloat ms = currentDelay;
-    if (ms < 50) ms = 50;
+    if (ms < 10) ms = 10;
     tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, (ms / 1000.0) * NSEC_PER_SEC, (ms / 1000.0) * NSEC_PER_SEC);
     dispatch_source_set_event_handler(tapTimer, ^{ [self doTap]; });
@@ -388,7 +366,7 @@ static void sendAll(NSString *msg) {
     [ctrlBox addSubview:spLbl];
 
     delayLabel = [[UILabel alloc] initWithFrame:CGRectMake(bw-95, yy, 80, 14)];
-    delayLabel.text = @"200 ms";
+    delayLabel.text = @"100 ms";
     delayLabel.textColor = rgba(100, 180, 255, 0.85);
     delayLabel.font = [UIFont fontWithName:@"Menlo-Bold" size:11] ?: [UIFont boldSystemFontOfSize:11];
     delayLabel.textAlignment = NSTextAlignmentRight;
@@ -396,9 +374,9 @@ static void sendAll(NSString *msg) {
     yy += 16;
 
     delaySlider = [[UISlider alloc] initWithFrame:CGRectMake(10, yy, bw-20, 22)];
-    delaySlider.minimumValue = 50;
+    delaySlider.minimumValue = 10;
     delaySlider.maximumValue = 500;
-    delaySlider.value = 200;
+    delaySlider.value = 100;
     delaySlider.continuous = YES;
     delaySlider.minimumTrackTintColor = rgba(60, 130, 255, 0.9);
     delaySlider.maximumTrackTintColor = rgba(35, 35, 55, 0.6);
@@ -631,7 +609,7 @@ static void sendAll(NSString *msg) {
     [g setTranslation:CGPointZero inView:v.superview];
     static CFTimeInterval lastPos = 0;
     CFTimeInterval now = CACurrentMediaTime();
-    if (g.state == UIGestureRecognizerStateEnded || now - lastPos > 0.03) {
+    if (g.state == UIGestureRecognizerStateEnded || now - lastPos > 0.1) {
         lastPos = now;
         sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
     }
