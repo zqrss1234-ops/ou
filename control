@@ -6,4 +6,4 @@ Description: أداة متكاملة لـ YallaLite - دمج حسابات وتح
 Maintainer: YourName
 Author: YourName
 Section: Tweaks
-Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 13.0)
+Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 14.0)

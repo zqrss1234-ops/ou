@@ -57,7 +57,6 @@ static UIColor *rgba(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
 }
 
 static void ensureOnTop(void) {
-    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
     UIWindow *w = activeWindow();
     if (!w) return;
     if (ctrlBox) {
@@ -81,7 +80,13 @@ static void startBgTask(void) {
             startBgTask();
         });
     }];
-    if (task != UIBackgroundTaskInvalid) bgTask = task;
+    if (task != UIBackgroundTaskInvalid) {
+        bgTask = task;
+    } else {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            startBgTask();
+        });
+    }
 }
 
 static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
@@ -146,8 +151,12 @@ static void udpInit(void) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     if ([m hasPrefix:@"POS:"]) {
                         NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                        if (p.count == 2 && tapCircle && tapCircle.superview)
-                            tapCircle.center = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                        if (p.count == 2 && tapCircle && tapCircle.superview) {
+                            CGPoint np = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                            [UIView animateWithDuration:0.08 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+                                tapCircle.center = np;
+                            } completion:nil];
+                        }
                     } else if ([m isEqualToString:@"RUN"]) {
                         if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
                     } else if ([m isEqualToString:@"STOP"]) {
@@ -197,8 +206,11 @@ static void pbReadState(void) {
         NSArray *xy = [parts[1] componentsSeparatedByString:@","];
         if (xy.count == 2 && tapCircle && tapCircle.superview) {
             CGFloat px = [xy[0] floatValue], py = [xy[1] floatValue];
-            if (px > 0 || py > 0)
-                tapCircle.center = CGPointMake(px, py);
+            if (px > 0 || py > 0) {
+                [UIView animateWithDuration:0.08 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+                    tapCircle.center = CGPointMake(px, py);
+                } completion:nil];
+            }
         }
     }
 }
@@ -217,18 +229,18 @@ static void sendAll(NSString *msg) {
 + (void)doTapLocal {
     if (!tapCircle || !running) return;
     if (!tapCircle.superview) return;
-    [UIView animateWithDuration:0.015 animations:^{
+    [UIView animateWithDuration:0.02 delay:0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
         tapCircle.transform = CGAffineTransformMakeScale(0.78, 0.78);
         tapCircle.backgroundColor = rgba(255, 200, 50, 0.9);
     } completion:^(BOOL f) {
-        [UIView animateWithDuration:0.015 animations:^{
+        [UIView animateWithDuration:0.018 delay:0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
             tapCircle.transform = CGAffineTransformIdentity;
             tapCircle.backgroundColor = rgba(255, 255, 255, 0.12);
-        }];
+        } completion:nil];
     }];
     UIWindow *w = activeWindow();
     if (!w) return;
-    BOOL ch = tapCircle.hidden, bh = ctrlBox.hidden;
+    BOOL ch = tapCircle.hidden, bh = ctrlBox ? ctrlBox.hidden : YES;
     tapCircle.hidden = YES; ctrlBox.hidden = YES;
     CGPoint pt = [tapCircle.superview convertPoint:tapCircle.center toView:w];
     UIView *target = [w hitTest:pt withEvent:nil];
@@ -245,7 +257,7 @@ static void sendAll(NSString *msg) {
     fx.center = pt; fx.backgroundColor = rgba(100, 180, 255, 0.5);
     fx.layer.cornerRadius = 8; fx.userInteractionEnabled = NO;
     [w addSubview:fx];
-    [UIView animateWithDuration:0.3 animations:^{
+    [UIView animateWithDuration:0.35 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
         fx.alpha = 0; fx.transform = CGAffineTransformMakeScale(4, 4);
     } completion:^(BOOL f) { [fx removeFromSuperview]; }];
 }
@@ -255,7 +267,7 @@ static void sendAll(NSString *msg) {
 + (void)start {
     if (tapTimer) return;
     CGFloat ms = currentDelay;
-    if (ms < 10) ms = 10;
+    if (ms < 1) ms = 1;
     tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, (ms / 1000.0) * NSEC_PER_SEC, (ms / 1000.0) * NSEC_PER_SEC);
     dispatch_source_set_event_handler(tapTimer, ^{ [self doTap]; });
@@ -347,14 +359,14 @@ static void sendAll(NSString *msg) {
     spLbl.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
     [ctrlBox addSubview:spLbl];
     delayLabel = [[UILabel alloc] initWithFrame:CGRectMake(bw-95, yy, 80, 14)];
-    delayLabel.text = @"100 ms"; delayLabel.textColor = rgba(100, 180, 255, 0.85);
+    delayLabel.text = @"0.10 ث"; delayLabel.textColor = rgba(100, 180, 255, 0.85);
     delayLabel.font = [UIFont fontWithName:@"Menlo-Bold" size:11] ?: [UIFont boldSystemFontOfSize:11];
     delayLabel.textAlignment = NSTextAlignmentRight;
     [ctrlBox addSubview:delayLabel];
     yy += 16;
 
     delaySlider = [[UISlider alloc] initWithFrame:CGRectMake(10, yy, bw-20, 22)];
-    delaySlider.minimumValue = 10; delaySlider.maximumValue = 500; delaySlider.value = 100;
+    delaySlider.minimumValue = 0; delaySlider.maximumValue = 50000; delaySlider.value = 100;
     delaySlider.continuous = YES;
     delaySlider.minimumTrackTintColor = rgba(60, 130, 255, 0.9);
     delaySlider.maximumTrackTintColor = rgba(35, 35, 55, 0.6);
@@ -415,8 +427,8 @@ static void sendAll(NSString *msg) {
     tapCircle.backgroundColor = rgba(255, 255, 255, 0.12);
     tapCircle.layer.cornerRadius = cs/2;
     tapCircle.layer.borderColor = rgba(0, 0, 0, 0.9).CGColor; tapCircle.layer.borderWidth = 2.5;
-    tapCircle.layer.shadowColor = UIColor.blackColor.CGColor; tapCircle.layer.shadowOpacity = 0.5;
-    tapCircle.layer.shadowOffset = CGSizeZero; tapCircle.layer.shadowRadius = 10;
+    tapCircle.layer.shadowColor = rgba(100, 180, 255, 0.5).CGColor; tapCircle.layer.shadowOpacity = 0.8;
+    tapCircle.layer.shadowOffset = CGSizeZero; tapCircle.layer.shadowRadius = 14;
     tapCircle.userInteractionEnabled = YES; tapCircle.tag = 300;
     UILabel *impossibleLbl = [[UILabel alloc] initWithFrame:tapCircle.bounds];
     impossibleLbl.text = @"impossible"; impossibleLbl.textColor = rgba(0, 0, 0, 0.25);
@@ -515,9 +527,9 @@ static void sendAll(NSString *msg) {
 }
 
 + (void)speedChange {
-    CGFloat v = round(delaySlider.value);
+    CGFloat v = delaySlider.value;
     delaySlider.value = v; currentDelay = v;
-    delayLabel.text = [NSString stringWithFormat:@"%03.0f ms", v];
+    delayLabel.text = [NSString stringWithFormat:@"%.2f ث", v / 1000.0];
     if (running) { [Tapper stop]; [Tapper start]; }
 }
 
@@ -542,7 +554,7 @@ static void sendAll(NSString *msg) {
     [g setTranslation:CGPointZero inView:v.superview];
     static CFTimeInterval lastPos = 0;
     CFTimeInterval now = CACurrentMediaTime();
-    if (g.state == UIGestureRecognizerStateEnded || now - lastPos > 0.1) {
+    if (g.state == UIGestureRecognizerStateEnded || now - lastPos > 0.033) {
         lastPos = now;
         sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
     }
