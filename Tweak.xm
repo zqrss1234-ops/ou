@@ -1,4 +1,4 @@
-#import <UIKit/UIKit.h>
+﻿#import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <sys/socket.h>
 #import <sys/select.h>
@@ -7,7 +7,6 @@
 #import <objc/runtime.h>
 #import <substrate.h>
 #import <signal.h>
-#import <setjmp.h>
 #import <dlfcn.h>
 #import <pthread.h>
 #import <unistd.h>
@@ -15,9 +14,9 @@
 #pragma mark - Names
 
 static NSArray<NSString *> *accountNames = @[
-    @"عبدالإله", @"شارو", @"لحلوح", @"سعيد",
-    @"ابومتعب", @"كنق الشرق", @"حاتم",
-    @"الكايد", @"الشمامره", @"الهباس"
+    @"╪╣╪¿╪»╪º┘ä╪Ñ┘ä┘ç", @"╪┤╪º╪▒┘ê", @"┘ä╪¡┘ä┘ê╪¡", @"╪│╪╣┘è╪»",
+    @"╪º╪¿┘ê┘à╪¬╪╣╪¿", @"┘â┘å┘é ╪º┘ä╪┤╪▒┘é", @"╪¡╪º╪¬┘à",
+    @"╪º┘ä┘â╪º┘è╪»", @"╪º┘ä╪┤┘à╪º┘à╪▒┘ç", @"╪º┘ä┘ç╪¿╪º╪│"
 ];
 
 #pragma mark - State
@@ -137,15 +136,11 @@ static void startBgTaskRenewal(void) {
         dispatch_source_t t = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), 10 * NSEC_PER_SEC, 2 * NSEC_PER_SEC);
         dispatch_source_set_event_handler(t, ^{
-            ylt_recover_guard = 1;
-            if (sigsetjmp(ylt_recover_jmp, 1) == 0) {
-                if (bgTask != UIBackgroundTaskInvalid) {
-                    [[UIApplication sharedApplication] endBackgroundTask:bgTask];
-                    bgTask = UIBackgroundTaskInvalid;
-                }
-                startBgTask();
+            if (bgTask != UIBackgroundTaskInvalid) {
+                [[UIApplication sharedApplication] endBackgroundTask:bgTask];
+                bgTask = UIBackgroundTaskInvalid;
             }
-            ylt_recover_guard = 0;
+            startBgTask();
         });
         dispatch_resume(t);
     });
@@ -311,12 +306,7 @@ static void sendAll(NSString *msg) {
     if (ms < 1) ms = 1;
     tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, (ms / 1000.0) * NSEC_PER_SEC, (ms / 1000.0) * NSEC_PER_SEC);
-    dispatch_source_set_event_handler(tapTimer, ^{
-        ylt_recover_guard = 1;
-        if (!sigsetjmp(ylt_recover_jmp, 1))
-            [self doTap];
-        ylt_recover_guard = 0;
-    });
+    dispatch_source_set_event_handler(tapTimer, ^{ [self doTap]; });
     dispatch_resume(tapTimer);
 }
 
@@ -345,7 +335,7 @@ static void sendAll(NSString *msg) {
 
     NSString *marqueeTxt = @"";
     for (NSString *n in accountNames)
-        marqueeTxt = [marqueeTxt stringByAppendingFormat:@"  ◉  %@", n];
+        marqueeTxt = [marqueeTxt stringByAppendingFormat:@"  Γùë  %@", n];
 
     CGFloat bw = 230, bh = 210, bx = (sw-bw)/2, by = sh * 0.12;
     ctrlBox = [[UIView alloc] initWithFrame:CGRectMake(bx, by, bw, bh)];
@@ -392,24 +382,20 @@ static void sendAll(NSString *msg) {
         marqueeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(marqueeTimer, DISPATCH_TIME_NOW, (1.0/60.0) * NSEC_PER_SEC, (1.0/60.0) * NSEC_PER_SEC);
         dispatch_source_set_event_handler(marqueeTimer, ^{
-            ylt_recover_guard = 1;
-            if (sigsetjmp(ylt_recover_jmp, 1) == 0) {
-                offset -= singleW / 1500.0;
-                if (offset <= -singleW) offset += singleW;
-                marqueeLbl.transform = CGAffineTransformMakeTranslation(offset, 0);
-            }
-            ylt_recover_guard = 0;
+            offset -= singleW / 1500.0;
+            if (offset <= -singleW) offset += singleW;
+            marqueeLbl.transform = CGAffineTransformMakeTranslation(offset, 0);
         });
         dispatch_resume(marqueeTimer);
     }
     yy += 40;
 
     UILabel *spLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, yy, 90, 14)];
-    spLbl.text = @"سرعة النقر"; spLbl.textColor = rgba(150, 160, 190, 0.65);
+    spLbl.text = @"╪│╪▒╪╣╪⌐ ╪º┘ä┘å┘é╪▒"; spLbl.textColor = rgba(150, 160, 190, 0.65);
     spLbl.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
     [ctrlBox addSubview:spLbl];
     delayLabel = [[UILabel alloc] initWithFrame:CGRectMake(bw-95, yy, 80, 14)];
-    delayLabel.text = @"0.10 ث"; delayLabel.textColor = rgba(100, 180, 255, 0.85);
+    delayLabel.text = @"0.10 ╪½"; delayLabel.textColor = rgba(100, 180, 255, 0.85);
     delayLabel.font = [UIFont fontWithName:@"Menlo-Bold" size:11] ?: [UIFont boldSystemFontOfSize:11];
     delayLabel.textAlignment = NSTextAlignmentRight;
     [ctrlBox addSubview:delayLabel];
@@ -429,7 +415,7 @@ static void sendAll(NSString *msg) {
     runBtn.frame = CGRectMake(10, yy, (bw-26)*0.62, 38);
     runBtn.backgroundColor = rgba(40, 100, 230, 1); runBtn.layer.cornerRadius = 16;
     runBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [runBtn setTitle:@"▶  تشغيل" forState:UIControlStateNormal];
+    [runBtn setTitle:@"Γû╢  ╪¬╪┤╪║┘è┘ä" forState:UIControlStateNormal];
     [runBtn setTitleColor:rgba(220, 230, 255, 1) forState:UIControlStateNormal];
     [runBtn addTarget:self action:@selector(toggleRun) forControlEvents:UIControlEventTouchUpInside];
     [ctrlBox addSubview:runBtn];
@@ -437,7 +423,7 @@ static void sendAll(NSString *msg) {
     hideBtn.frame = CGRectMake(CGRectGetMaxX(runBtn.frame)+6, yy, (bw-26)*0.38, 38);
     hideBtn.backgroundColor = rgba(35, 35, 55, 0.7); hideBtn.layer.cornerRadius = 16;
     hideBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-    [hideBtn setTitle:@"✕ إخفاء" forState:UIControlStateNormal];
+    [hideBtn setTitle:@"Γ£ò ╪Ñ╪«┘ü╪º╪í" forState:UIControlStateNormal];
     [hideBtn setTitleColor:rgba(150, 160, 190, 0.9) forState:UIControlStateNormal];
     [hideBtn addTarget:self action:@selector(hideAll) forControlEvents:UIControlEventTouchUpInside];
     [ctrlBox addSubview:hideBtn];
@@ -455,7 +441,7 @@ static void sendAll(NSString *msg) {
     mergeBtn.backgroundColor = [UIColor clearColor];
     mergeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
     mergeBtn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    [mergeBtn setTitle:@"  دمج الحسابات" forState:UIControlStateNormal];
+    [mergeBtn setTitle:@"  ╪»┘à╪¼ ╪º┘ä╪¡╪│╪º╪¿╪º╪¬" forState:UIControlStateNormal];
     [mergeBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
     [mergeBtn addTarget:self action:@selector(toggleMerge) forControlEvents:UIControlEventTouchUpInside];
     [mergeRow addSubview:mergeBtn];
@@ -463,7 +449,7 @@ static void sendAll(NSString *msg) {
     yy += 38;
 
     UILabel *footer = [[UILabel alloc] initWithFrame:CGRectMake(0, yy, bw, bh-yy-2)];
-    footer.text = @"حقوق عبدالإله"; footer.textColor = rgba(80, 90, 120, 0.3);
+    footer.text = @"╪¡┘é┘ê┘é ╪╣╪¿╪»╪º┘ä╪Ñ┘ä┘ç"; footer.textColor = rgba(80, 90, 120, 0.3);
     footer.font = [UIFont systemFontOfSize:7 weight:UIFontWeightLight];
     footer.textAlignment = NSTextAlignmentCenter;
     [ctrlBox addSubview:footer];
@@ -502,9 +488,7 @@ static void sendAll(NSString *msg) {
     rainbowTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(rainbowTimer, DISPATCH_TIME_NOW, 0.4 * NSEC_PER_SEC, 0);
     dispatch_source_set_event_handler(rainbowTimer, ^{
-        ylt_recover_guard = 1;
-        if (sigsetjmp(ylt_recover_jmp, 1) == 0) {
-        if (!accentLine) { ylt_recover_guard = 0; return; }
+        if (!accentLine) return;
         hue += 1.0/16.0; if (hue > 1) hue -= 1;
         UIColor *c1 = [UIColor colorWithHue:hue saturation:1 brightness:1 alpha:0.8];
         UIColor *c2 = [UIColor colorWithHue:fmod(hue+0.4,1) saturation:0.8 brightness:0.9 alpha:0.4];
@@ -515,8 +499,6 @@ static void sendAll(NSString *msg) {
         if (mergeBtn && isMain) mergeBtn.backgroundColor = [UIColor colorWithHue:hue saturation:0.5 brightness:0.3 alpha:0.3];
         UIView *dot = [ctrlBox viewWithTag:500];
         if (dot) dot.backgroundColor = isMain ? rgba(60, 200, 100, 0.8) : rgba(120, 130, 160, 0.3);
-        }
-        ylt_recover_guard = 0;
     });
     dispatch_resume(rainbowTimer);
 }
@@ -542,10 +524,10 @@ static void sendAll(NSString *msg) {
     [UIView animateWithDuration:0.2 animations:^{
         if (running) {
             runBtn.backgroundColor = rgba(200, 60, 60, 1);
-            [runBtn setTitle:@"■  إيقاف" forState:UIControlStateNormal];
+            [runBtn setTitle:@"Γûá  ╪Ñ┘è┘é╪º┘ü" forState:UIControlStateNormal];
         } else {
             runBtn.backgroundColor = rgba(40, 100, 230, 1);
-            [runBtn setTitle:@"▶  تشغيل" forState:UIControlStateNormal];
+            [runBtn setTitle:@"Γû╢  ╪¬╪┤╪║┘è┘ä" forState:UIControlStateNormal];
         }
     }];
 }
@@ -554,10 +536,10 @@ static void sendAll(NSString *msg) {
     if (!mergeBtn) return;
     [UIView animateWithDuration:0.2 animations:^{
         if (isMain) {
-            [mergeBtn setTitle:@"  تم دمج الحسابات ✓" forState:UIControlStateNormal];
+            [mergeBtn setTitle:@"  ╪¬┘à ╪»┘à╪¼ ╪º┘ä╪¡╪│╪º╪¿╪º╪¬ Γ£ô" forState:UIControlStateNormal];
             [mergeBtn setTitleColor:rgba(100, 255, 150, 1) forState:UIControlStateNormal];
         } else {
-            [mergeBtn setTitle:@"  دمج الحسابات" forState:UIControlStateNormal];
+            [mergeBtn setTitle:@"  ╪»┘à╪¼ ╪º┘ä╪¡╪│╪º╪¿╪º╪¬" forState:UIControlStateNormal];
             [mergeBtn setTitleColor:rgba(120, 130, 160, 0.7) forState:UIControlStateNormal];
         }
     }];
@@ -568,7 +550,7 @@ static void sendAll(NSString *msg) {
 + (void)toggleMerge {
     isMain = !isMain; [self updateMergeUI];
     if (isMain) {
-        [self alert:@"تم دمج الحسابات ✓" msg:@"جميع النسخ ستتبع هذه النسخة"];
+        [self alert:@"╪¬┘à ╪»┘à╪¼ ╪º┘ä╪¡╪│╪º╪¿╪º╪¬ Γ£ô" msg:@"╪¼┘à┘è╪╣ ╪º┘ä┘å╪│╪« ╪│╪¬╪¬╪¿╪╣ ┘ç╪░┘ç ╪º┘ä┘å╪│╪«╪⌐"];
         if (tapCircle) sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         if (running) sendAll(@"RUN");
     }
@@ -583,7 +565,7 @@ static void sendAll(NSString *msg) {
 + (void)speedChange {
     CGFloat v = delaySlider.value;
     delaySlider.value = v; currentDelay = v;
-    delayLabel.text = [NSString stringWithFormat:@"%.2f ث", v / 1000.0];
+    delayLabel.text = [NSString stringWithFormat:@"%.2f ╪½", v / 1000.0];
     if (running) { [Tapper stop]; [Tapper start]; }
 }
 
@@ -618,7 +600,7 @@ static void sendAll(NSString *msg) {
     if (g.state == UIGestureRecognizerStateBegan) {
         isMain = !isMain; [self updateMergeUI];
         if (isMain) {
-            [self alert:@"✓ رئيسي" msg:@"النسخة الرئيسية - تتحكم بجميع النسخ"];
+            [self alert:@"Γ£ô ╪▒╪ª┘è╪│┘è" msg:@"╪º┘ä┘å╪│╪«╪⌐ ╪º┘ä╪▒╪ª┘è╪│┘è╪⌐ - ╪¬╪¬╪¡┘â┘à ╪¿╪¼┘à┘è╪╣ ╪º┘ä┘å╪│╪«"];
             if (tapCircle) sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", tapCircle.center.x, tapCircle.center.y]);
         }
     }
@@ -636,13 +618,6 @@ static void sendAll(NSString *msg) {
 
 #pragma mark - Constructor
 
-static sigjmp_buf ylt_recover_jmp;
-static volatile int ylt_recover_guard = 0;
-
-static void ylt_sigill_handler(int sig) {
-    if (ylt_recover_guard) siglongjmp(ylt_recover_jmp, 1);
-}
-
 __attribute__((constructor)) static void init() {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
@@ -650,13 +625,6 @@ __attribute__((constructor)) static void init() {
     signal(SIGABRT, SIG_IGN);
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
-
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = ylt_sigill_handler;
-    sigfillset(&sa.sa_mask);
-    sigaction(SIGILL, &sa, NULL);
-
     MSHookFunction((void *)&exit, (void *)ylt_hook_exit, (void **)&orig_exit);
     MSHookFunction((void *)&abort, (void *)ylt_hook_abort, (void **)&orig_abort);
     MSHookFunction((void *)&kill, (void *)ylt_hook_kill, (void **)&orig_kill);
@@ -674,26 +642,17 @@ __attribute__((constructor)) static void init() {
         [Controller buildUI];
         topTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
-        dispatch_source_set_event_handler(topTimer, ^{
-            ylt_recover_guard = 1;
-            if (!sigsetjmp(ylt_recover_jmp, 1))
-                ensureOnTop();
-            ylt_recover_guard = 0;
-        });
+        dispatch_source_set_event_handler(topTimer, ^{ ensureOnTop(); });
         dispatch_resume(topTimer);
         dispatch_source_t dismissTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(dismissTimer, DISPATCH_TIME_NOW, 0.15 * NSEC_PER_SEC, 0.05 * NSEC_PER_SEC);
         dispatch_source_set_event_handler(dismissTimer, ^{
-            ylt_recover_guard = 1;
-            if (sigsetjmp(ylt_recover_jmp, 1) == 0) {
             UIWindow *w = activeWindow();
-            if (!w || !w.rootViewController) { ylt_recover_guard = 0; return; }
+            if (!w || !w.rootViewController) return;
             UIViewController *top = w.rootViewController;
             while (top.presentedViewController) top = top.presentedViewController;
             if (top && [top isKindOfClass:objc_getClass("UIAlertController")])
                 [top dismissViewControllerAnimated:NO completion:nil];
-            }
-            ylt_recover_guard = 0;
         });
         dispatch_resume(dismissTimer);
     });
@@ -723,3 +682,4 @@ __attribute__((constructor)) static void init() {
         ensureOnTop();
     }];
 }
+
