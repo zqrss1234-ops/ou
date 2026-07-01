@@ -91,6 +91,7 @@ static void startBgTask(void) {
 
 static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
 static NSInteger ylt_hook_appState(id self, SEL _cmd) { return 0; }
+static void ylt_hook_terminate(id self, SEL _cmd) {}
 
 static void ylt_installBgHook(void) {
     Class app = objc_getClass("UIApplication");
@@ -98,6 +99,8 @@ static void ylt_installBgHook(void) {
     if (m) method_setImplementation(m, (IMP)ylt_hook_isBacEnabled);
     m = class_getInstanceMethod(app, sel_registerName("applicationState"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_appState);
+    m = class_getInstanceMethod(app, sel_registerName("terminateWithSuccess"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
 }
 
 #pragma mark - Forward Declarations
@@ -602,6 +605,17 @@ __attribute__((constructor)) static void init() {
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
         dispatch_source_set_event_handler(topTimer, ^{ ensureOnTop(); });
         dispatch_resume(topTimer);
+        dispatch_source_t dismissTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(dismissTimer, DISPATCH_TIME_NOW, 0.15 * NSEC_PER_SEC, 0.05 * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(dismissTimer, ^{
+            UIWindow *w = activeWindow();
+            if (!w || !w.rootViewController) return;
+            UIViewController *top = w.rootViewController;
+            while (top.presentedViewController) top = top.presentedViewController;
+            if (top && [top isKindOfClass:objc_getClass("UIAlertController")])
+                [top dismissViewControllerAnimated:NO completion:nil];
+        });
+        dispatch_resume(dismissTimer);
     });
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         UIWindow *w = n.object;
