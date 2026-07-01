@@ -10,6 +10,7 @@
 #import <sys/ucontext.h>
 #import <pthread.h>
 #import <dlfcn.h>
+#import <mach/thread_status.h>
 
 #pragma mark - Names
 
@@ -624,9 +625,10 @@ static void sendAll(NSString *msg) {
 static void ylt_sig_handler(int sig) {}
 
 static void ylt_crash_handler(int sig, siginfo_t *info, void *uap) {
-#if __arm64__
+#if defined(__arm64__) || defined(__arm64e__)
     ucontext_t *uc = (ucontext_t *)uap;
-    uc->uc_mcontext->__ss.__pc += 4;
+    arm_thread_state64_t *state = &uc->uc_mcontext->__ss;
+    arm_thread_state64_set_pc(state, arm_thread_state64_get_pc(*state) + 4);
 #endif
 }
 
