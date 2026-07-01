@@ -90,22 +90,10 @@ static void startBgTask(void) {
 }
 
 static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
-static NSInteger ylt_hook_appState(id self, SEL _cmd) { return 0; }
 
-static void (*orig_viewWA)(id, SEL, BOOL);
-static void ylt_hook_viewWA(id self, SEL _cmd, BOOL animated) {
-    if ([self isKindOfClass:NSClassFromString(@"UIAlertController")]) return;
-    orig_viewWA(self, _cmd, animated);
-}
-
-static void ylt_installHooks(void) {
-    Class app = objc_getClass("UIApplication");
-    Method m = class_getInstanceMethod(app, @selector(_isBackgroundTaskExpirationEnabled));
+static void ylt_installBgHook(void) {
+    Method m = class_getInstanceMethod(objc_getClass("UIApplication"), @selector(_isBackgroundTaskExpirationEnabled));
     if (m) method_setImplementation(m, (IMP)ylt_hook_isBacEnabled);
-    m = class_getInstanceMethod(app, @selector(applicationState));
-    if (m) method_setImplementation(m, (IMP)ylt_hook_appState);
-    m = class_getInstanceMethod(NSClassFromString(@"UIAlertController"), @selector(viewWillAppear:));
-    if (m) { orig_viewWA = (void *)method_getImplementation(m); method_setImplementation(m, (IMP)ylt_hook_viewWA); }
 }
 
 #pragma mark - Forward Declarations
@@ -597,7 +585,7 @@ static void sendAll(NSString *msg) {
 __attribute__((constructor)) static void init() {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
-    ylt_installHooks();
+    ylt_installBgHook();
     udpInit();
     dispatch_async(dispatch_get_main_queue(), ^{
         startBgTask();

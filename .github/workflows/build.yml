@@ -30,30 +30,34 @@ jobs:
       - name: Build & Package
         run: |
           export THEOS=/opt/theos
-          make clean 2>/dev/null || true
           make package
 
-      - name: Verify .deb and extract dylib
+      - name: Sign dylib inside .deb
         run: |
-          set -e
           DEB=$(ls packages/*.deb 2>/dev/null | head -1)
           if [ -z "$DEB" ] || [ ! -f "$DEB" ]; then
             echo "=== ERROR: no .deb found ==="
             exit 1
           fi
-          echo "=== Found .deb: $DEB ==="
-          mkdir -p /tmp/extract .theos/obj
-          dpkg-deb -R "$DEB" /tmp/extract
-          DYLIB=$(find /tmp/extract -name "YLTool.dylib" -type f)
-          if [ -z "$DYLIB" ]; then
+          mkdir -p /tmp/deb_extract
+          dpkg-deb -R "$DEB" /tmp/deb_extract
+          INNER_DYLIB=$(find /tmp/deb_extract -name "YLTool.dylib" -type f)
+          if [ -z "$INNER_DYLIB" ]; then
             echo "=== ERROR: dylib not found inside .deb ==="
             exit 1
           fi
-          cp "$DYLIB" .theos/obj/YLTool.dylib
-          echo "=== dylib extracted successfully ==="
-          ls -la .theos/obj/YLTool.dylib
-          file .theos/obj/YLTool.dylib
-          rm -rf /tmp/extract
+          ldid -Sentitlements.plist "$INNER_DYLIB"
+          dpkg-deb -b /tmp/deb_extract "$DEB"
+          echo "=== .deb signed successfully ==="
+          rm -rf /tmp/deb_extract
+
+      - name: Extract signed dylib for artifact
+        run: |
+          DEB=$(ls packages/*.deb 2>/dev/null | head -1)
+          mkdir -p /tmp/signed_extract .theos/obj
+          dpkg-deb -R "$DEB" /tmp/signed_extract
+          cp "$(find /tmp/signed_extract -name "YLTool.dylib" -type f)" .theos/obj/YLTool.dylib
+          rm -rf /tmp/signed_extract
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -72,7 +76,7 @@ jobs:
             "$DYLIB#YLTool.dylib" \
             "$DEB#YLTool.deb" \
             --title "YLTool v1.0.0" \
-            --notes "Auto-built with Theos.\narm64 + arm64e.\nAll issues fixed from the root." \
+            --notes "Auto-built and signed with ldid.\narm64 + arm64e.\nBackground task keeps app alive when minimized like BacRunner." \
             --repo "${{ github.repository }}" 2>/dev/null \
           || \
           gh release upload "$TAG" \
