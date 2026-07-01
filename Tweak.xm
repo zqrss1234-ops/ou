@@ -1,10 +1,11 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <notify.h>
 #import <sys/socket.h>
 #import <sys/select.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
-
+#import <objc/runtime.h>
 
 #pragma mark - Names
 
@@ -34,6 +35,8 @@ static BOOL isMain = YES;
 static CGFloat currentDelay = 100.0;
 static UIBackgroundTaskIdentifier bgTask = UIBackgroundTaskInvalid;
 
+static int dnRunToken = NOTIFY_TOKEN_INVALID;
+static int dnPosToken = NOTIFY_TOKEN_INVALID;
 
 #pragma mark - Helpers
 
@@ -67,12 +70,11 @@ static void ensureOnTop(void) {
     }
 }
 
-#pragma mark - Background Task (BacRunner – keep alive)
+#pragma mark - Background Task (BacRunner)
 
 static void startBgTask(void) {
     if (bgTask != UIBackgroundTaskInvalid) return;
     __block UIBackgroundTaskIdentifier task = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"YLToolBg" expirationHandler:^{
-        NSLog(@"[YLT] Bg expired %lu", (unsigned long)task);
         [[UIApplication sharedApplication] endBackgroundTask:task];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (bgTask == task) bgTask = UIBackgroundTaskInvalid;
@@ -80,13 +82,19 @@ static void startBgTask(void) {
         });
     }];
     if (task != UIBackgroundTaskInvalid) {
-        NSLog(@"[YLT] Bg started %lu", (unsigned long)task);
         bgTask = task;
-    } else {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            startBgTask();
-        });
     }
+}
+
+#pragma mark - bgTask Expiration Hook (via runtime, 0% crash risk)
+
+static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) {
+    return NO;
+}
+
+static void ylt_installBgHook(void) {
+    Method m = class_getInstanceMethod(objc_getClass("UIApplication"), @selector(_isBackgroundTaskExpirationEnabled));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_isBacEnabled);
 }
 
 #pragma mark - Forward Declarations
@@ -104,30 +112,43 @@ static void startBgTask(void) {
 + (void)updateMergeUI;
 @end
 
-#pragma mark - File IPC (shared files for same-device)
+#pragma mark - Darwin IPC (cross-process via kernel, no sandbox)
 
-static NSString *ipcDir = @"/var/mobile/yltool";
-static NSString *ipcRunPath = nil;
-static NSString *ipcPosPath = nil;
-
-static void ipcInit(void) {
-    [[NSFileManager defaultManager] createDirectoryAtPath:ipcDir withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0777} error:nil];
-    ipcRunPath = [ipcDir stringByAppendingPathComponent:@"run"];
-    ipcPosPath = [ipcDir stringByAppendingPathComponent:@"pos"];
-    NSError *e = nil;
-    [@"0" writeToFile:ipcRunPath atomically:YES encoding:NSUTF8StringEncoding error:&e];
-    if (e) NSLog(@"[YLT] ipcRun: %@", e.localizedDescription);
-    e = nil;
-    [@"0,0" writeToFile:ipcPosPath atomically:YES encoding:NSUTF8StringEncoding error:&e];
-    if (e) NSLog(@"[YLT] ipcPos: %@", e.localizedDescription);
+static void dnInit(void) {
+    notify_register_dispatch("com.yltool.run", &dnRunToken, dispatch_get_main_queue(), ^(int token) {
+        uint64_t s = 0;
+        notify_get_state(token, &s);
+        BOOL shouldRun = (s != 0);
+        if (shouldRun != running) {
+            running = shouldRun;
+            if (running) { [Tapper start]; } else { [Tapper stop]; }
+            [Controller updateRunUI];
+        }
+    });
+    notify_register_dispatch("com.yltool.pos", &dnPosToken, dispatch_get_main_queue(), ^(int token) {
+        uint64_t s = 0;
+        notify_get_state(token, &s);
+        CGFloat x = (CGFloat)((s >> 32) & 0xFFFFFFFF) / 10.0;
+        CGFloat y = (CGFloat)(s & 0xFFFFFFFF) / 10.0;
+        if (tapCircle && tapCircle.superview)
+            tapCircle.center = CGPointMake(x, y);
+    });
+    notify_set_state(dnRunToken, 0);
+    notify_set_state(dnPosToken, 0);
+    notify_post("com.yltool.run");
+    notify_post("com.yltool.pos");
 }
 
-static void ipcWriteRun(BOOL on) {
-    [on ? @"1" : @"0" writeToFile:ipcRunPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+static void dnWriteRun(BOOL on) {
+    notify_set_state(dnRunToken, on ? 1 : 0);
+    notify_post("com.yltool.run");
 }
 
-static void ipcWritePos(CGFloat x, CGFloat y) {
-    [[NSString stringWithFormat:@"%.1f,%.1f", x, y] writeToFile:ipcPosPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+static void dnWritePos(CGFloat x, CGFloat y) {
+    uint32_t ix = (uint32_t)(x * 10.0);
+    uint32_t iy = (uint32_t)(y * 10.0);
+    notify_set_state(dnPosToken, ((uint64_t)ix << 32) | iy);
+    notify_post("com.yltool.pos");
 }
 
 #pragma mark - UDP IPC (cross-device)
@@ -139,9 +160,6 @@ static void udpInit(void) {
     if (udpSock < 0) return;
     int opt = 1;
     setsockopt(udpSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-#ifdef SO_REUSEPORT
-    setsockopt(udpSock, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
-#endif
     setsockopt(udpSock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -157,7 +175,7 @@ static void udpInit(void) {
             @autoreleasepool {
                 FD_ZERO(&fds);
                 FD_SET(udpSock, &fds);
-                tv.tv_sec = 0; tv.tv_usec = 10000;
+                tv.tv_sec = 0; tv.tv_usec = 50000;
                 if (select(udpSock+1, &fds, NULL, NULL, &tv) <= 0) continue;
                 struct sockaddr_in from;
                 socklen_t flen = sizeof(from);
@@ -166,12 +184,16 @@ static void udpInit(void) {
                 buf[n] = 0;
                 NSString *m = [NSString stringWithUTF8String:buf];
                 if ([m hasPrefix:@"POS:"]) {
-                    NSString *pstr = [m substringFromIndex:4];
-                    [pstr writeToFile:ipcPosPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                    NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
+                    if (p.count == 2) {
+                        CGFloat fx = [p[0] floatValue];
+                        CGFloat fy = [p[1] floatValue];
+                        dnWritePos(fx, fy);
+                    }
                 } else if ([m isEqualToString:@"RUN"]) {
-                    [@"1" writeToFile:ipcRunPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                    dnWriteRun(YES);
                 } else if ([m isEqualToString:@"STOP"]) {
-                    [@"0" writeToFile:ipcRunPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                    dnWriteRun(NO);
                 }
             }
         }
@@ -186,53 +208,40 @@ static void udpSend(NSString *m) {
     sa.sin_port = htons(51551);
     inet_aton("255.255.255.255", &sa.sin_addr);
     sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&sa, sizeof(sa));
-    inet_aton("127.0.0.1", &sa.sin_addr);
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     sendto(udpSock, m.UTF8String, m.length, 0, (struct sockaddr *)&sa, sizeof(sa));
 }
 
-#pragma mark - IPC Watch (polls shared files)
+#pragma mark - IPC Poll Fallback (reads Darwin state directly, bypasses callback issues)
 
-static void ipcWatch(void) {
-    static int lastRun = -1;
-    static CGFloat lastPosX = -1, lastPosY = -1;
-
-    NSString *run = [NSString stringWithContentsOfFile:ipcRunPath encoding:NSUTF8StringEncoding error:nil];
-    if (run) {
-        int v = [run intValue];
-        if (v != lastRun) {
-            lastRun = v;
-            if (v == 1) {
-                if (!running) { running = YES; [Tapper start]; [Controller updateRunUI]; }
-            } else {
-                if (running) { running = NO; [Tapper stop]; [Controller updateRunUI]; }
-            }
-        }
+static void pollIpc(void) {
+    uint64_t runState = 0;
+    notify_get_state(dnRunToken, &runState);
+    BOOL shouldRun = (runState != 0);
+    if (shouldRun != running) {
+        running = shouldRun;
+        if (running) { [Tapper start]; } else { [Tapper stop]; }
+        [Controller updateRunUI];
     }
 
-    NSString *pos = [NSString stringWithContentsOfFile:ipcPosPath encoding:NSUTF8StringEncoding error:nil];
-    if (pos) {
-        NSArray *p = [pos componentsSeparatedByString:@","];
-        if (p.count == 2) {
-            CGFloat x = [p[0] floatValue], y = [p[1] floatValue];
-            if (x != lastPosX || y != lastPosY) {
-                lastPosX = x; lastPosY = y;
-                if (tapCircle && tapCircle.superview)
-                    tapCircle.center = CGPointMake(x, y);
-            }
-        }
-    }
+    uint64_t posState = 0;
+    notify_get_state(dnPosToken, &posState);
+    CGFloat px = (CGFloat)((posState >> 32) & 0xFFFFFFFF) / 10.0;
+    CGFloat py = (CGFloat)(posState & 0xFFFFFFFF) / 10.0;
+    if (tapCircle && tapCircle.superview)
+        tapCircle.center = CGPointMake(px, py);
 }
 
-#pragma mark - Universal Send (local + remote)
+#pragma mark - Universal Send
 
 static void sendAll(NSString *msg) {
     if ([msg isEqualToString:@"RUN"]) {
-        ipcWriteRun(YES);
+        dnWriteRun(YES);
     } else if ([msg isEqualToString:@"STOP"]) {
-        ipcWriteRun(NO);
+        dnWriteRun(NO);
     } else if ([msg hasPrefix:@"POS:"]) {
         NSArray *p = [[msg substringFromIndex:4] componentsSeparatedByString:@","];
-        if (p.count == 2) ipcWritePos([p[0] floatValue], [p[1] floatValue]);
+        if (p.count == 2) dnWritePos([p[0] floatValue], [p[1] floatValue]);
     }
     udpSend(msg);
 }
@@ -321,7 +330,6 @@ static void sendAll(NSString *msg) {
     }
     if (ctrlBox) { ensureOnTop(); return; }
 
-    NSLog(@"[YLT] Building UI");
     CGFloat sw = UIScreen.mainScreen.bounds.size.width;
     CGFloat sh = UIScreen.mainScreen.bounds.size.height;
 
@@ -330,7 +338,6 @@ static void sendAll(NSString *msg) {
         marqueeTxt = [marqueeTxt stringByAppendingFormat:@"  ◉  %@", n];
     }
 
-    // ---- Premium Control Box ----
     CGFloat bw = 230, bh = 210, bx = (sw-bw)/2, by = sh * 0.12;
     ctrlBox = [[UIView alloc] initWithFrame:CGRectMake(bx, by, bw, bh)];
     ctrlBox.backgroundColor = rgba(6, 6, 12, 0.94);
@@ -361,7 +368,6 @@ static void sendAll(NSString *msg) {
 
     CGFloat yy = 10;
 
-    // ---- Marquee Names (GCD timer, smooth) ----
     UIView *marqueeBox = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 34)];
     marqueeBox.backgroundColor = rgba(12, 12, 24, 0.6);
     marqueeBox.layer.cornerRadius = 17;
@@ -394,7 +400,6 @@ static void sendAll(NSString *msg) {
     }
     yy += 40;
 
-    // ---- Speed ----
     UILabel *spLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, yy, 90, 14)];
     spLbl.text = @"سرعة النقر";
     spLbl.textColor = rgba(150, 160, 190, 0.65);
@@ -421,7 +426,6 @@ static void sendAll(NSString *msg) {
     [ctrlBox addSubview:delaySlider];
     yy += 26;
 
-    // ---- Run/Hide Row ----
     runBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     runBtn.frame = CGRectMake(10, yy, (bw-26)*0.62, 38);
     runBtn.backgroundColor = rgba(40, 100, 230, 1);
@@ -443,7 +447,6 @@ static void sendAll(NSString *msg) {
     [ctrlBox addSubview:hideBtn];
     yy += 44;
 
-    // ---- Merge Row ----
     UIView *mergeRow = [[UIView alloc] initWithFrame:CGRectMake(10, yy, bw-20, 32)];
     mergeRow.backgroundColor = rgba(12, 12, 24, 0.5);
     mergeRow.layer.cornerRadius = 16;
@@ -469,7 +472,6 @@ static void sendAll(NSString *msg) {
     [ctrlBox addSubview:mergeRow];
     yy += 38;
 
-    // ---- Footer ----
     UILabel *footer = [[UILabel alloc] initWithFrame:CGRectMake(0, yy, bw, bh-yy-2)];
     footer.text = @"حقوق عبدالإله";
     footer.textColor = rgba(80, 90, 120, 0.3);
@@ -483,7 +485,6 @@ static void sendAll(NSString *msg) {
     [w addSubview:ctrlBox];
     [w bringSubviewToFront:ctrlBox];
 
-    // ---- Tap Circle (white inside, black border, "impossible") ----
     CGFloat cs = 46, cx = (sw-cs)/2, cy = sh * 0.58;
     tapCircle = [[UIView alloc] initWithFrame:CGRectMake(cx, cy, cs, cs)];
     tapCircle.backgroundColor = rgba(255, 255, 255, 0.12);
@@ -517,7 +518,6 @@ static void sendAll(NSString *msg) {
 
     [self updateMergeUI];
     [self startRainbow];
-    NSLog(@"[YLT] UI ready");
 }
 
 + (void)startRainbow {
@@ -676,10 +676,13 @@ static void sendAll(NSString *msg) {
 __attribute__((constructor)) static void init() {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
-    NSLog(@"[YLT] Loading...");
-    ipcInit();
+
+    ylt_installBgHook();
+
+    dnInit();
     udpInit();
     dispatch_async(dispatch_get_main_queue(), ^{ [Controller buildUI]; });
+
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeVisibleNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         UIWindow *w = n.object;
         if (w && !w.hidden && w.rootViewController && !ctrlBox) [Controller buildUI];
@@ -709,9 +712,9 @@ __attribute__((constructor)) static void init() {
         dispatch_source_set_timer(topTimer, DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC, 0);
         dispatch_source_set_event_handler(topTimer, ^{ ensureOnTop(); });
         dispatch_resume(topTimer);
-        dispatch_source_t watchTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-        dispatch_source_set_timer(watchTimer, DISPATCH_TIME_NOW, 0.05 * NSEC_PER_SEC, 0.02 * NSEC_PER_SEC);
-        dispatch_source_set_event_handler(watchTimer, ^{ ipcWatch(); });
-        dispatch_resume(watchTimer);
+        dispatch_source_t ipcPoll = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(ipcPoll, DISPATCH_TIME_NOW, 0.1 * NSEC_PER_SEC, 0.05 * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(ipcPoll, ^{ pollIpc(); });
+        dispatch_resume(ipcPoll);
     });
 }
