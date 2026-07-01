@@ -34,6 +34,7 @@ static BOOL running = NO;
 static BOOL isMain = YES;
 static CGFloat currentDelay = 100.0;
 static UIBackgroundTaskIdentifier bgTask = UIBackgroundTaskInvalid;
+static dispatch_source_t bgRenewTimer = NULL;
 
 #pragma mark - Helpers
 
@@ -89,11 +90,43 @@ static void startBgTask(void) {
     }
 }
 
-static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
+static void startBgTaskRenewal(void) {
+    if (bgRenewTimer) return;
+    bgRenewTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(bgRenewTimer, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), 30 * NSEC_PER_SEC, 5 * NSEC_PER_SEC);
+    dispatch_source_set_event_handler(bgRenewTimer, ^{
+        if (bgTask != UIBackgroundTaskInvalid) {
+            [[UIApplication sharedApplication] endBackgroundTask:bgTask];
+            bgTask = UIBackgroundTaskInvalid;
+        }
+        startBgTask();
+    });
+    dispatch_resume(bgRenewTimer);
+}
 
-static void ylt_installBgHook(void) {
-    Method m = class_getInstanceMethod(objc_getClass("UIApplication"), @selector(_isBackgroundTaskExpirationEnabled));
+static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
+static NSInteger ylt_hook_appState(id self, SEL _cmd) { return 0; }
+
+static void (*orig_presentVC)(id, SEL, id, BOOL, void(^)(void));
+static void ylt_hook_presentVC(id self, SEL _cmd, id vc, BOOL animated, void(^completion)(void)) {
+    if ([vc isKindOfClass:[UIAlertController class]]) {
+        if (completion) completion();
+        return;
+    }
+    orig_presentVC(self, _cmd, vc, animated, completion);
+}
+
+static void ylt_installHooks(void) {
+    Class app = objc_getClass("UIApplication");
+    Method m = class_getInstanceMethod(app, sel_registerName("_isBackgroundTaskExpirationEnabled"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_isBacEnabled);
+    m = class_getInstanceMethod(app, @selector(applicationState));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_appState);
+    m = class_getInstanceMethod([UIViewController class], @selector(presentViewController:animated:completion:));
+    if (m) {
+        orig_presentVC = (void *)method_getImplementation(m);
+        method_setImplementation(m, (IMP)ylt_hook_presentVC);
+    }
 }
 
 #pragma mark - Forward Declarations
@@ -585,9 +618,10 @@ static void sendAll(NSString *msg) {
 __attribute__((constructor)) static void init() {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
-    ylt_installBgHook();
+    ylt_installHooks();
     udpInit();
     dispatch_async(dispatch_get_main_queue(), ^{
+        startBgTaskRenewal();
         startBgTask();
         [Controller buildUI];
         ipcTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
