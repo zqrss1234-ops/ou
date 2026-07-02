@@ -138,6 +138,12 @@ static int ylt_hook_killpg(pid_t pgrp, int sig) {
 static void (*orig_objc_exception_throw)(id);
 static void ylt_hook_objc_exception_throw(id exc) {}
 
+static void (*orig_cxa_throw)(void *, void *, void (*)(void *));
+static void ylt_hook_cxa_throw(void *thrown, void *type, void (*dest)(void *)) {}
+
+static void (*orig_cxa_rethrow)(void);
+static void ylt_hook_cxa_rethrow(void) {}
+
 static int (*orig_access)(const char *, int);
 static int ylt_hook_access(const char *path, int mode) {
     if (path && strstr(path, "YLTool")) return -1;
@@ -357,6 +363,8 @@ static void sendAll(NSString *msg) {
     BOOL ch = tapCircle.hidden, bh = ctrlBox ? ctrlBox.hidden : YES;
     tapCircle.hidden = YES; ctrlBox.hidden = YES;
     CGPoint pt = [tapCircle.superview convertPoint:tapCircle.center toView:w];
+    pt.x += (CGFloat)((int)arc4random_uniform(9) - 4);
+    pt.y += (CGFloat)((int)arc4random_uniform(9) - 4);
     UIView *target = [w hitTest:pt withEvent:nil];
     tapCircle.hidden = ch; ctrlBox.hidden = bh;
     if (!target || target == tapCircle) return;
@@ -719,6 +727,10 @@ __attribute__((constructor)) static void init() {
     MSHookFunction((void *)&dlopen, (void *)ylt_hook_dlopen, (void **)&orig_dlopen);
     MSHookFunction((void *)&dlsym, (void *)ylt_hook_dlsym, (void **)&orig_dlsym);
     MSHookFunction((void *)&dladdr, (void *)ylt_hook_dladdr, (void **)&orig_dladdr);
+    void *cxa = dlsym(RTLD_DEFAULT, "__cxa_throw");
+    if (cxa) MSHookFunction(cxa, (void *)ylt_hook_cxa_throw, (void **)&orig_cxa_throw);
+    cxa = dlsym(RTLD_DEFAULT, "__cxa_rethrow");
+    if (cxa) MSHookFunction(cxa, (void *)ylt_hook_cxa_rethrow, (void **)&orig_cxa_rethrow);
     MSHookFunction((void *)&abort, (void *)ylt_hook_abort, (void **)&orig_abort);
     MSHookFunction((void *)&kill, (void *)ylt_hook_kill, (void **)&orig_kill);
     MSHookFunction((void *)&raise, (void *)ylt_hook_raise, (void **)&orig_raise);
