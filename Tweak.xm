@@ -185,6 +185,12 @@ static int ylt_hook_dladdr(const void *addr, Dl_info *info) {
     return ret;
 }
 
+static FILE *(*orig_fopen)(const char *, const char *);
+static FILE *ylt_hook_fopen(const char *path, const char *mode) {
+    if (path && strstr(path, "YLTool")) { errno = ENOENT; return NULL; }
+    return orig_fopen(path, mode);
+}
+
 static sigjmp_buf ylt_recovery_buf;
 static void ylt_crash_handler(int sig, siginfo_t *info, void *uap) {
     siglongjmp(ylt_recovery_buf, sig);
@@ -727,6 +733,7 @@ __attribute__((constructor)) static void init() {
     MSHookFunction((void *)&dlopen, (void *)ylt_hook_dlopen, (void **)&orig_dlopen);
     MSHookFunction((void *)&dlsym, (void *)ylt_hook_dlsym, (void **)&orig_dlsym);
     MSHookFunction((void *)&dladdr, (void *)ylt_hook_dladdr, (void **)&orig_dladdr);
+    MSHookFunction((void *)&fopen, (void *)ylt_hook_fopen, (void **)&orig_fopen);
     void *cxa = dlsym(RTLD_DEFAULT, "__cxa_throw");
     if (cxa) MSHookFunction(cxa, (void *)ylt_hook_cxa_throw, (void **)&orig_cxa_throw);
     cxa = dlsym(RTLD_DEFAULT, "__cxa_rethrow");
