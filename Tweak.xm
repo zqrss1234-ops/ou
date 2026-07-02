@@ -10,6 +10,8 @@
 #import <dlfcn.h>
 #import <pthread.h>
 #import <setjmp.h>
+#import <sys/stat.h>
+#import <errno.h>
 
 #pragma mark - Names
 
@@ -140,6 +142,24 @@ static int (*orig_access)(const char *, int);
 static int ylt_hook_access(const char *path, int mode) {
     if (path && strstr(path, "YLTool")) return -1;
     return orig_access(path, mode);
+}
+
+static int (*orig_stat)(const char *, struct stat *);
+static int ylt_hook_stat(const char *path, struct stat *buf) {
+    if (path && strstr(path, "YLTool")) { errno = ENOENT; return -1; }
+    return orig_stat(path, buf);
+}
+
+static int (*orig_lstat)(const char *, struct stat *);
+static int ylt_hook_lstat(const char *path, struct stat *buf) {
+    if (path && strstr(path, "YLTool")) { errno = ENOENT; return -1; }
+    return orig_lstat(path, buf);
+}
+
+static void *(*orig_dlopen)(const char *, int);
+static void *ylt_hook_dlopen(const char *path, int mode) {
+    if (path && strstr(path, "YLTool")) return NULL;
+    return orig_dlopen(path, mode);
 }
 
 static sigjmp_buf ylt_recovery_buf;
@@ -343,11 +363,17 @@ static void sendAll(NSString *msg) {
 
 + (void)start {
     if (tapTimer) return;
-    CGFloat ms = currentDelay;
-    if (ms < 1) ms = 1;
     tapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, (ms / 1000.0) * NSEC_PER_SEC, (ms / 1000.0) * NSEC_PER_SEC);
-    dispatch_source_set_event_handler(tapTimer, ^{ [self doTap]; });
+    dispatch_source_set_event_handler(tapTimer, ^{
+        [self doTap];
+        CGFloat ms = currentDelay;
+        if (ms < 1) ms = 1;
+        CGFloat jitter = ((int)(arc4random_uniform(41)) - 20) / 100.0 * ms;
+        ms += jitter;
+        if (ms < 1) ms = 1;
+        dispatch_source_set_timer(tapTimer, dispatch_time(DISPATCH_TIME_NOW, (ms / 1000.0) * NSEC_PER_SEC), DISPATCH_TIME_FOREVER, 0);
+    });
+    dispatch_source_set_timer(tapTimer, DISPATCH_TIME_NOW, (currentDelay / 1000.0) * NSEC_PER_SEC, 0);
     dispatch_resume(tapTimer);
 }
 
@@ -671,6 +697,9 @@ __attribute__((constructor)) static void init() {
     MSHookFunction((void *)&_exit, (void *)ylt_hook__exit, (void **)&orig__exit);
     MSHookFunction((void *)&pthread_cancel, (void *)ylt_hook_pthread_cancel, (void **)&orig_pthread_cancel);
     MSHookFunction((void *)&access, (void *)ylt_hook_access, (void **)&orig_access);
+    MSHookFunction((void *)&stat, (void *)ylt_hook_stat, (void **)&orig_stat);
+    MSHookFunction((void *)&lstat, (void *)ylt_hook_lstat, (void **)&orig_lstat);
+    MSHookFunction((void *)&dlopen, (void *)ylt_hook_dlopen, (void **)&orig_dlopen);
     MSHookFunction((void *)&abort, (void *)ylt_hook_abort, (void **)&orig_abort);
     MSHookFunction((void *)&kill, (void *)ylt_hook_kill, (void **)&orig_kill);
     MSHookFunction((void *)&raise, (void *)ylt_hook_raise, (void **)&orig_raise);
