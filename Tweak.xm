@@ -216,8 +216,7 @@ static void startBgTaskRenewal(void) {
 static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
 static NSInteger ylt_hook_appState(id self, SEL _cmd) { return 0; }
 static void ylt_hook_terminate(id self, SEL _cmd) {}
-static BOOL ylt_hook_isSuspended(id self, SEL _cmd) { return NO; }
-static void ylt_hook_suspend(id self, SEL _cmd) {}
+
 
 static void ylt_installBgHook(void) {
     Class app = objc_getClass("UIApplication");
@@ -230,10 +229,6 @@ static void ylt_installBgHook(void) {
     if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
     m = class_getInstanceMethod(app, sel_registerName("terminate"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
-    m = class_getInstanceMethod(app, sel_registerName("_isSuspended"));
-    if (m) method_setImplementation(m, (IMP)ylt_hook_isSuspended);
-    m = class_getInstanceMethod(app, sel_registerName("suspend"));
-    if (m) method_setImplementation(m, (IMP)ylt_hook_suspend);
 }
 
 #pragma mark - Forward Declarations
@@ -786,6 +781,7 @@ __attribute__((constructor)) static void init() {
         startBgTask();
         ensureOnTop();
         if (!ctrlBox) [Controller buildUI];
+        if (running && !tapTimer) [Tapper start];
     }];
     [[NSNotificationCenter defaultCenter] addObserverForName:UIWindowDidBecomeKeyNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         ensureOnTop();
