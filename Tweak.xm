@@ -159,7 +159,24 @@ static int ylt_hook_lstat(const char *path, struct stat *buf) {
 static void *(*orig_dlopen)(const char *, int);
 static void *ylt_hook_dlopen(const char *path, int mode) {
     if (path && strstr(path, "YLTool")) return NULL;
+    if (path && strstr(path, "Substrate")) return NULL;
+    if (path && strstr(path, "substrate")) return NULL;
     return orig_dlopen(path, mode);
+}
+
+static void *(*orig_dlsym)(void *, const char *);
+static void *ylt_hook_dlsym(void *handle, const char *symbol) {
+    if (symbol && (strstr(symbol, "MSHook") || strstr(symbol, "Substrate") || strstr(symbol, "substrate") || strstr(symbol, "YLTool")))
+        return NULL;
+    return orig_dlsym(handle, symbol);
+}
+
+static int (*orig_dladdr)(const void *, Dl_info *);
+static int ylt_hook_dladdr(const void *addr, Dl_info *info) {
+    int ret = orig_dladdr(addr, info);
+    if (ret && info && info->dli_fname && strstr(info->dli_fname, "YLTool"))
+        return 0;
+    return ret;
 }
 
 static sigjmp_buf ylt_recovery_buf;
@@ -700,6 +717,8 @@ __attribute__((constructor)) static void init() {
     MSHookFunction((void *)&stat, (void *)ylt_hook_stat, (void **)&orig_stat);
     MSHookFunction((void *)&lstat, (void *)ylt_hook_lstat, (void **)&orig_lstat);
     MSHookFunction((void *)&dlopen, (void *)ylt_hook_dlopen, (void **)&orig_dlopen);
+    MSHookFunction((void *)&dlsym, (void *)ylt_hook_dlsym, (void **)&orig_dlsym);
+    MSHookFunction((void *)&dladdr, (void *)ylt_hook_dladdr, (void **)&orig_dladdr);
     MSHookFunction((void *)&abort, (void *)ylt_hook_abort, (void **)&orig_abort);
     MSHookFunction((void *)&kill, (void *)ylt_hook_kill, (void **)&orig_kill);
     MSHookFunction((void *)&raise, (void *)ylt_hook_raise, (void **)&orig_raise);
